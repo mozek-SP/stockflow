@@ -1,0 +1,273 @@
+"use client"
+
+import React, { useEffect, useState } from "react"
+import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
+import { TopBar } from "@/components/layout/TopBar"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Card, CardContent } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useToast } from "@/hooks/use-toast"
+import { useLang } from "@/lib/i18n"
+import { useMockStore } from "@/lib/mock-store"
+import { useAuth } from "@/contexts/AuthContext"
+import { formatDate, formatNumber } from "@/lib/utils"
+import { Plus, PackagePlus, X, Barcode, ClipboardList, Eye } from "lucide-react"
+
+interface LineItem { product_id: string; quantity: number; serial_numbers?: string }
+
+export default function StockInPage() {
+    const { t } = useLang()
+    const { isAdmin } = useAuth()
+    const store = useMockStore()
+    const [records, setRecords] = useState<any[]>(isSupabaseConfigured ? [] : store.stockIns)
+    const [loading, setLoading] = useState(isSupabaseConfigured)
+    const [dialogOpen, setDialogOpen] = useState(false)
+    const [saving, setSaving] = useState(false)
+    const [detailsOpen, setDetailsOpen] = useState(false)
+    const [selectedRecord, setSelectedRecord] = useState<any>(null)
+    const [form, setForm] = useState({ supplier_id: "", warehouse_id: "", date: new Date().toISOString().split("T")[0], notes: "" })
+    const [items, setItems] = useState<LineItem[]>([{ product_id: "", quantity: 1, serial_numbers: "" }])
+    const { toast } = useToast()
+    const supabase = createClient()
+
+    // Live sync from store in mock mode
+    useEffect(() => { if (!isSupabaseConfigured) setRecords(store.stockIns) }, [store.stockIns])
+    useEffect(() => { if (isSupabaseConfigured) { fetchData(); } }, [])
+
+    async function fetchData() {
+        setLoading(true)
+        const { data } = await supabase.from("stock_in")
+            .select("*, suppliers(name), warehouses(name), stock_in_items(quantity, serial_numbers, products(name, sku, requires_sn))")
+            .order("created_at", { ascending: false }).limit(50)
+        setRecords((data as any) || [])
+        setLoading(false)
+    }
+
+    function resetForm() { setForm({ supplier_id: "", warehouse_id: "", date: new Date().toISOString().split("T")[0], notes: "" }); setItems([{ product_id: "", quantity: 1, serial_numbers: "" }]) }
+
+    async function handleSave() {
+        if (!form.warehouse_id || !form.date) { toast({ title: t.warehouseDateRequired, variant: "destructive" }); return }
+        const validItems = items.filter((i) => i.product_id && i.quantity > 0)
+        if (validItems.length === 0) { toast({ title: t.addAtLeastOne, variant: "destructive" }); return }
+
+        for (const item of validItems) {
+            const product = store.products.find(p => p.id === item.product_id)
+            if (product?.requires_sn) {
+                const sns = (item.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s)
+                if (sns.length !== item.quantity) {
+                    toast({ title: (t as any).serialNumbers ? `${product.name} needs exactly ${item.quantity} S/N (found ${sns.length})` : "S/N mismatch", variant: "destructive" })
+                    return
+                }
+            }
+        }
+
+        if (!isSupabaseConfigured) {
+            const wh = store.warehouses.find((w) => w.id === form.warehouse_id)
+            const sup = store.suppliers.find((s) => s.id === form.supplier_id)
+            const newRecord = {
+                id: `si-${Date.now()}`,
+                date: form.date, created_at: new Date().toISOString(),
+                supplier_id: form.supplier_id || null, warehouse_id: form.warehouse_id, notes: form.notes || null,
+                suppliers: sup ? { name: sup.name } : null,
+                warehouses: wh ? { name: wh.name } : null,
+                stock_in_items: validItems.map((i) => {
+                    const p = store.products.find((p) => p.id === i.product_id);
+                    const sns = p?.requires_sn ? (i.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s) : [];
+                    return { quantity: i.quantity, serial_numbers: sns, products: { name: p?.name || "?", sku: p?.sku || "?", requires_sn: p?.requires_sn || false } }
+                }),
+            }
+            store.setStockIns([newRecord, ...store.stockIns])
+            for (const item of validItems) {
+                const prod = store.products.find((p) => p.id === item.product_id)
+                const sns = prod?.requires_sn ? (item.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s) : [];
+                store.addMovement({
+                    product_id: item.product_id, warehouse_id: form.warehouse_id,
+                    type: "IN", quantity: item.quantity,
+                    notes: form.notes ? `Stock In #${newRecord.id.slice(0, 8)} - ${form.notes}` : `Stock In #${newRecord.id.slice(0, 8)}`,
+                    products: prod ? { name: prod.name, sku: prod.sku } : null,
+                    warehouses: wh ? { name: wh.name } : null,
+                    serial_numbers: sns,
+                })
+            }
+            toast({ title: t.stockInRecorded }); setDialogOpen(false); resetForm(); return
+        }
+
+        setSaving(true)
+        try {
+            const { data: stockIn, error: hErr } = await (supabase.from("stock_in") as any).insert({ supplier_id: form.supplier_id || null, warehouse_id: form.warehouse_id, date: form.date, notes: form.notes || null, created_by: "admin" } as any).select().single()
+            if (hErr) throw hErr
+            await (supabase.from("stock_in_items") as any).insert(validItems.map((i) => {
+                const product = store.products.find(p => p.id === i.product_id);
+                const sns = product?.requires_sn ? (i.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s) : [];
+                return { stock_in_id: (stockIn as any).id, product_id: i.product_id, quantity: i.quantity, serial_numbers: sns }
+            }) as any)
+            for (const item of validItems) {
+                const product = store.products.find(p => p.id === item.product_id);
+                const sns = product?.requires_sn ? (item.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s) : [];
+                await (supabase.from("stock_movements") as any).insert({ product_id: item.product_id, warehouse_id: form.warehouse_id, type: "IN", quantity: item.quantity, reference_id: (stockIn as any).id, notes: form.notes ? `Stock In #${(stockIn as any).id.slice(0, 8)} - ${form.notes}` : `Stock In #${(stockIn as any).id.slice(0, 8)}`, serial_numbers: sns } as any)
+                const { data: ex } = await supabase.from("inventory").select("id, quantity").eq("product_id", item.product_id).eq("warehouse_id", form.warehouse_id).single()
+                if (ex) await (supabase.from("inventory") as any).update({ quantity: (ex as any).quantity + item.quantity } as any).eq("id", (ex as any).id)
+                else await (supabase.from("inventory") as any).insert({ product_id: item.product_id, warehouse_id: form.warehouse_id, quantity: item.quantity } as any)
+            }
+            toast({ title: t.stockInRecorded }); setDialogOpen(false); resetForm(); fetchData()
+        } catch (err: any) { toast({ title: "Error", description: err.message, variant: "destructive" }) }
+        setSaving(false)
+    }
+
+    const totalItems = (r: any) => r.stock_in_items?.reduce((s: number, i: any) => s + i.quantity, 0) || 0
+
+    return (
+        <div className="flex flex-col min-h-full bg-slate-50">
+            <TopBar title={t.stockIn} description={t.receiveInventory}
+                actions={isAdmin ? <Button onClick={() => { resetForm(); setDialogOpen(true) }} variant="gradient" size="sm" className="gap-2"><Plus className="w-4 h-4" />{t.newStockIn}</Button> : undefined} />
+            <div className="p-6">
+                <Card className="border-slate-200"><CardContent className="p-0">
+                    {loading ? (
+                        <div className="flex justify-center py-20"><div className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" /></div>
+                    ) : records.length === 0 ? (
+                        <div className="flex flex-col items-center py-16 text-slate-400"><PackagePlus className="w-12 h-12 mb-3 opacity-20" /><p className="text-sm">{t.noStockIn}</p></div>
+                    ) : (
+                        <Table>
+                            <TableHeader><TableRow>
+                                <TableHead>{t.reference}</TableHead><TableHead>{t.date}</TableHead>
+                                <TableHead>{t.supplier}</TableHead><TableHead>{t.warehouse}</TableHead>
+                                <TableHead>{t.product}</TableHead><TableHead>{t.note}</TableHead><TableHead className="text-right">{t.totalQty}</TableHead>
+                            </TableRow></TableHeader>
+                            <TableBody>
+                                {records.map((r) => (
+                                    <TableRow key={r.id} onClick={() => { setSelectedRecord(r); setDetailsOpen(true); }} className="cursor-pointer hover:bg-slate-50 transition-colors">
+                                        <TableCell><code className="text-xs bg-violet-50 text-violet-700 px-2 py-0.5 rounded font-mono">#{r.id.slice(0, 8).toUpperCase()}</code></TableCell>
+                                        <TableCell className="text-sm text-slate-500">{formatDate(r.date)}</TableCell>
+                                        <TableCell className="text-sm text-slate-700">{r.suppliers?.name || "—"}</TableCell>
+                                        <TableCell><Badge variant="default">{r.warehouses?.name || "—"}</Badge></TableCell>
+                                        <TableCell><div className="flex flex-wrap gap-1">{r.stock_in_items?.slice(0, 2).map((i: any, idx: number) => (<span key={idx} className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{i.products?.name}</span>))}{(r.stock_in_items?.length || 0) > 2 && <span className="text-xs text-slate-400">+{r.stock_in_items.length - 2}</span>}</div></TableCell>
+                                        <TableCell className="text-sm text-slate-500 max-w-[200px] truncate">{r.notes || "—"}</TableCell>
+                                        <TableCell className="text-right"><span className="text-sm font-semibold text-emerald-600">+{formatNumber(totalItems(r))}</span></TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    )}
+                </CardContent></Card>
+            </div>
+
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader><DialogTitle className="flex items-center gap-2"><PackagePlus className="w-5 h-5 text-emerald-600" />{t.newStockIn}</DialogTitle></DialogHeader>
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-3 gap-3">
+                            <div className="space-y-1.5"><Label>{t.date} *</Label><Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></div>
+                            <div className="space-y-1.5"><Label>{t.warehouse} *</Label>
+                                <Select value={form.warehouse_id} onValueChange={(v) => setForm({ ...form, warehouse_id: v })}>
+                                    <SelectTrigger><SelectValue placeholder={t.selectWarehouse} /></SelectTrigger>
+                                    <SelectContent>{store.warehouses.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-1.5"><Label>{t.supplier}</Label>
+                                <Select value={form.supplier_id} onValueChange={(v) => setForm({ ...form, supplier_id: v })}>
+                                    <SelectTrigger><SelectValue placeholder={t.selectSupplier} /></SelectTrigger>
+                                    <SelectContent>{store.suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+                        <div className="space-y-1.5"><Label>{t.note}</Label><Input placeholder={t.note} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+                        <div className="space-y-2">
+                            <div className="flex items-center justify-between"><Label>{t.products}</Label><Button size="sm" variant="outline" onClick={() => setItems([...items, { product_id: "", quantity: 1 }])} className="gap-1 h-7 text-xs"><Plus className="w-3 h-3" />{t.addRow}</Button></div>
+                            <div className="rounded-xl border border-slate-200 overflow-hidden">
+                                <Table>
+                                    <TableHeader><TableRow><TableHead>{t.product}</TableHead><TableHead className="w-32">{t.quantity}</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
+                                    <TableBody>
+                                        {items.map((item, i) => {
+                                            const product = store.products.find(p => p.id === item.product_id);
+                                            return (
+                                                <React.Fragment key={i}>
+                                                    <TableRow>
+                                                        <TableCell className="py-2">
+                                                            <Select value={item.product_id} onValueChange={(v) => setItems(items.map((x, idx) => idx === i ? { ...x, product_id: v } : x))}>
+                                                                <SelectTrigger className="h-8"><SelectValue placeholder={t.selectProduct} /></SelectTrigger>
+                                                                <SelectContent>{store.products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}</SelectContent>
+                                                            </Select>
+                                                        </TableCell>
+                                                        <TableCell className="py-2"><Input type="number" min={1} value={item.quantity} onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, quantity: parseInt(e.target.value) || 1 } : x))} className="h-8" /></TableCell>
+                                                        <TableCell className="py-2"><Button size="icon" variant="ghost" className="w-7 h-7 hover:bg-red-50 hover:text-red-600" onClick={() => setItems(items.filter((_, idx) => idx !== i))} disabled={items.length === 1}><X className="w-3.5 h-3.5" /></Button></TableCell>
+                                                    </TableRow>
+                                                    {product?.requires_sn && (
+                                                        <TableRow>
+                                                            <TableCell colSpan={3} className="py-2 bg-slate-50 border-b border-slate-100">
+                                                                <Input placeholder="Enter S/N separated by commas..." value={item.serial_numbers || ""} onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, serial_numbers: e.target.value } : x))} className="text-xs h-8" />
+                                                                <div className="text-[10px] text-slate-500 mt-1 pl-1">Found {(item.serial_numbers || "").split(",").filter(s => s.trim()).length} of {item.quantity} required S/Ns</div>
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    )}
+                                                </React.Fragment>
+                                            )
+                                        })}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        </div>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="ghost" onClick={() => setDialogOpen(false)}>{t.cancel}</Button>
+                        <Button variant="gradient" onClick={handleSave} disabled={saving} className="gap-2"><PackagePlus className="w-4 h-4" />{saving ? t.processing : t.confirmStockIn}</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
+                <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-emerald-600">
+                            <ClipboardList className="w-5 h-5" />
+                            {selectedRecord ? `${t.stockIn} #${selectedRecord.id.slice(0, 8).toUpperCase()}` : t.reference}
+                        </DialogTitle>
+                    </DialogHeader>
+                    {selectedRecord && (
+                        <div className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4 text-sm bg-slate-50 p-4 rounded-xl border border-slate-100">
+                                <div><span className="text-slate-500 block text-xs">{t.date}</span><span className="font-medium">{formatDate(selectedRecord.date)}</span></div>
+                                <div><span className="text-slate-500 block text-xs">{t.warehouse}</span><span className="font-medium">{selectedRecord.warehouses?.name || "—"}</span></div>
+                                <div><span className="text-slate-500 block text-xs">{t.supplier}</span><span className="font-medium">{selectedRecord.suppliers?.name || "—"}</span></div>
+                                <div><span className="text-slate-500 block text-xs">{t.note}</span><span className="font-medium">{selectedRecord.notes || "—"}</span></div>
+                            </div>
+                            <div>
+                                <h4 className="text-sm font-semibold mb-2">{t.products}</h4>
+                                <div className="space-y-3">
+                                    {selectedRecord.stock_in_items?.map((item: any, i: number) => (
+                                        <div key={i} className="border border-slate-200 rounded-lg p-3">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <div className="font-medium text-slate-800">{item.products?.name} {(item.products?.sku || item.products?.requires_sn) && <span className="text-xs text-slate-500 font-mono bg-slate-100 px-1 py-0.5 rounded ml-1">{item.products?.sku}</span>}</div>
+                                                <div className="text-sm font-semibold text-emerald-600">+{formatNumber(item.quantity)}</div>
+                                            </div>
+                                            {item.products?.requires_sn && (
+                                                <div className="bg-slate-50 rounded-lg p-2 border border-slate-100">
+                                                    <div className="text-xs font-semibold text-slate-500 mb-1 flex items-center gap-1"><Barcode className="w-3.5 h-3.5" /> {(t as any).serialNumbers || "S/N"} ({item.quantity})</div>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {item.serial_numbers && item.serial_numbers.length > 0 ? (
+                                                            item.serial_numbers.map((sn: string, idx: number) => (
+                                                                <code key={idx} className="bg-white border border-slate-200 text-slate-600 px-1.5 py-0.5 rounded text-[10px] select-all">
+                                                                    {sn}
+                                                                </code>
+                                                            ))
+                                                        ) : (
+                                                            <span className="text-xs text-slate-400">No S/N recorded</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+        </div>
+    )
+}
