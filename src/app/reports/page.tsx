@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
+import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 import { TopBar } from "@/components/layout/TopBar"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -59,24 +60,72 @@ export default function ReportsPage() {
     const [exportingXlsx, setExportingXlsx] = useState(false)
     const [exportingPdf, setExportingPdf] = useState(false)
 
+    const [loading, setLoading] = useState(isSupabaseConfigured)
+    const [productsData, setProductsData] = useState<any[]>(isSupabaseConfigured ? [] : store.products)
+    const [stockInData, setStockInData] = useState<any[]>(isSupabaseConfigured ? [] : store.stockIns)
+    const [stockOutData, setStockOutData] = useState<any[]>(isSupabaseConfigured ? [] : store.stockOuts)
+    const [movementsData, setMovementsData] = useState<any[]>(isSupabaseConfigured ? [] : store.movements)
+    const [inventoryMap, setInventoryMap] = useState<Record<string, number>>({})
+
+    useEffect(() => {
+        if (!isSupabaseConfigured) {
+            setProductsData(store.products)
+            setStockInData(store.stockIns)
+            setStockOutData(store.stockOuts)
+            setMovementsData(store.movements)
+        }
+    }, [store.products, store.stockIns, store.stockOuts, store.movements])
+
+    useEffect(() => { if (isSupabaseConfigured) fetchData() }, [])
+
+    async function fetchData() {
+        setLoading(true)
+        const supabase = createClient()
+        try {
+            const [
+                { data: pData },
+                { data: invData },
+                { data: inData },
+                { data: outData },
+                { data: mData }
+            ] = await Promise.all([
+                supabase.from("products").select("*, categories(name)").order("name"),
+                supabase.from("inventory").select("product_id, quantity"),
+                supabase.from("stock_in").select("*, suppliers(name), warehouses(name), stock_in_items(quantity, products(name))").order("created_at", { ascending: false }),
+                supabase.from("stock_out").select("*, warehouses(name), stock_out_items(quantity, products(name))").order("created_at", { ascending: false }),
+                supabase.from("stock_movements").select("*, products(name, sku), warehouses(name)").order("created_at", { ascending: false })
+            ])
+
+            if (pData) setProductsData(pData)
+            if (inData) setStockInData(inData)
+            if (outData) setStockOutData(outData)
+            if (mData) setMovementsData(mData)
+            
+            const invMap: Record<string, number> = {}
+            invData?.forEach(i => { invMap[i.product_id] = (invMap[i.product_id] || 0) + i.quantity })
+            setInventoryMap(invMap)
+        } catch (e) { console.error(e) }
+        setLoading(false)
+    }
+
     // ── Data getters ──────────────────────────────────────────────────────────
     function getProductsData() {
-        return store.products.map(p => ({
+        return productsData.map(p => ({
             sku: p.sku,
             name: p.name,
-            category: store.categories.find(c => c.id === p.category_id)?.name || "—",
+            category: isSupabaseConfigured ? (p.categories?.name || "—") : (store.categories.find(c => c.id === p.category_id)?.name || "—"),
             unit: p.unit || "—",
             dealer: p.dealer_price ?? 0,
             net: p.net_price ?? 0,
             retail: p.retail_price ?? 0,
-            stock: store.getInventoryQty(p.id),
+            stock: isSupabaseConfigured ? (inventoryMap[p.id] || 0) : store.getInventoryQty(p.id),
             min_stock: p.minimum_stock ?? 0,
             requires_sn: p.requires_sn ? (isTH ? "ใช่" : "Yes") : (isTH ? "ไม่" : "No"),
         }))
     }
 
     function getStockInData() {
-        return store.stockIns.map(r => ({
+        return stockInData.map(r => ({
             ref: r.id.slice(0, 8).toUpperCase(),
             date: formatDate(r.date),
             supplier: r.suppliers?.name || "—",
@@ -88,7 +137,7 @@ export default function ReportsPage() {
     }
 
     function getStockOutData() {
-        return store.stockOuts.map(r => ({
+        return stockOutData.map(r => ({
             ref: r.id.slice(0, 8).toUpperCase(),
             date: formatDate(r.date),
             warehouse: r.warehouses?.name || "—",
@@ -99,7 +148,7 @@ export default function ReportsPage() {
     }
 
     function getMovementsData() {
-        return store.movements.map(m => ({
+        return movementsData.map(m => ({
             date: formatDateTime(m.created_at),
             type: m.type.replace("_", " "),
             product: m.products?.name || "—",
@@ -114,8 +163,8 @@ export default function ReportsPage() {
     function getStockHistoryData() {
         const productId = selectedProductId
         if (!productId) return []
-        const product = store.products.find(p => p.id === productId)
-        const filtered = store.movements.filter(m =>
+        const product = productsData.find(p => p.id === productId)
+        const filtered = movementsData.filter(m =>
             m.product_id === productId || m.products?.name === product?.name
         )
         const sorted = [...filtered].reverse()
@@ -507,10 +556,10 @@ export default function ReportsPage() {
     // ── Count helper ──────────────────────────────────────────────────────────
     function getCount() {
         switch (activeTab) {
-            case "products": return store.products.length
-            case "stock-in": return store.stockIns.length
-            case "stock-out": return store.stockOuts.length
-            case "movements": return store.movements.length
+            case "products": return productsData.length
+            case "stock-in": return stockInData.length
+            case "stock-out": return stockOutData.length
+            case "movements": return movementsData.length
             case "stock-history": return selectedProductId ? getStockHistoryData().length : 0
         }
     }
@@ -582,7 +631,7 @@ export default function ReportsPage() {
                                                 <SelectValue placeholder={isTH ? "เลือกสินค้า..." : "Select product..."} />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                {store.products.map(p => (
+                                                {productsData.map(p => (
                                                     <SelectItem key={p.id} value={p.id}>
                                                         {p.name} <span className="text-slate-400 text-xs ml-1">({p.sku})</span>
                                                     </SelectItem>
