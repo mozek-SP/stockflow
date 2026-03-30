@@ -16,7 +16,7 @@ import { useLang } from "@/lib/i18n"
 import { useMockStore } from "@/lib/mock-store"
 import { useAuth } from "@/contexts/AuthContext"
 import { formatDate, formatNumber } from "@/lib/utils"
-import { Plus, PackageMinus, X, Barcode, ClipboardList, CheckSquare, Square } from "lucide-react"
+import { Plus, PackageMinus, X, Barcode, ClipboardList, CheckSquare, Square, Search, Edit2, Eye } from "lucide-react"
 
 interface LineItem { product_id: string; quantity: number; selected_sns: string[] }
 
@@ -53,9 +53,10 @@ export default function StockOutPage() {
     const [saving, setSaving] = useState(false)
     const [detailsOpen, setDetailsOpen] = useState(false)
     const [selectedRecord, setSelectedRecord] = useState<any>(null)
+    const [editingId, setEditingId] = useState<string | null>(null)
     const [form, setForm] = useState({ warehouse_id: "", date: new Date().toISOString().split("T")[0], notes: "" })
     const [items, setItems] = useState<LineItem[]>([{ product_id: "", quantity: 1, selected_sns: [] }])
-    // availableSnMap[i] = list of S/N available for item i
+    const [itemSearch, setItemSearch] = useState<string[]>([])
     const [availableSnMap, setAvailableSnMap] = useState<Record<number, string[]>>({})
     const [warehouseInventory, setWarehouseInventory] = useState<any[]>([])
     const { toast } = useToast()
@@ -78,7 +79,7 @@ export default function StockOutPage() {
             { data: whData }
         ] = await Promise.all([
             supabase.from("stock_out").select("*, warehouses(name), stock_out_items(quantity, serial_numbers, products(name, sku, requires_sn))").order("created_at", { ascending: false }).limit(50),
-            supabase.from("products").select("id, name, sku, requires_sn").order("name"),
+            supabase.from("products").select("id, name, sku, requires_sn").order("sku"),
             supabase.from("warehouses").select("id, name").order("name")
         ])
         setRecords((outData as any) || [])
@@ -90,8 +91,28 @@ export default function StockOutPage() {
     function resetForm() {
         setForm({ warehouse_id: "", date: new Date().toISOString().split("T")[0], notes: "" })
         setItems([{ product_id: "", quantity: 1, selected_sns: [] }])
+        setItemSearch([""])
         setAvailableSnMap({})
         setWarehouseInventory([])
+        setEditingId(null)
+    }
+
+    async function openEdit(r: any) {
+        setEditingId(r.id)
+        setForm({
+            warehouse_id: r.warehouse_id || "",
+            date: r.date,
+            notes: r.notes || ""
+        })
+        const mappedItems = r.stock_out_items.map((i: any) => ({
+            product_id: i.product_id,
+            quantity: i.quantity,
+            selected_sns: i.serial_numbers || []
+        }))
+        setItems(mappedItems)
+        setItemSearch(mappedItems.map(() => ""))
+        await onWarehouseChange(r.warehouse_id, mappedItems)
+        setDialogOpen(true)
     }
 
     async function loadAvailableSns(itemIndex: number, productId: string, warehouseId: string) {
@@ -119,14 +140,13 @@ export default function StockOutPage() {
         if (productId && form.warehouse_id) loadAvailableSns(i, productId, form.warehouse_id)
     }
 
-    async function onWarehouseChange(warehouseId: string) {
-        setForm({ ...form, warehouse_id: warehouseId })
-        // Reload S/N for all items that have a product selected
-        items.forEach((item, i) => {
+    async function onWarehouseChange(warehouseId: string, currentItems?: LineItem[]) {
+        const activeItems = currentItems || items
+        setForm(prev => ({ ...prev, warehouse_id: warehouseId }))
+        
+        activeItems.forEach((item, i) => {
             if (item.product_id) loadAvailableSns(i, item.product_id, warehouseId)
         })
-        // Clear selected SNs since warehouse changed
-        setItems(items.map(x => ({ ...x, selected_sns: [] })))
 
         if (!warehouseId) {
             setWarehouseInventory([])
@@ -194,18 +214,39 @@ export default function StockOutPage() {
 
         setSaving(true)
         try {
-            const { data: stockOut, error } = await (supabase.from("stock_out") as any).insert({ warehouse_id: form.warehouse_id, date: form.date, notes: form.notes || null, created_by: "admin" } as any).select().single()
-            if (error) throw error
+            let stockOutId = editingId
+            
+            if (editingId) {
+                // Revert
+                const { data: oldItems } = await supabase.from("stock_out_items").select("*").eq("stock_out_id", editingId)
+                const oldRecord = records.find(r => r.id === editingId)
+                if (oldItems && oldRecord) {
+                    for (const oi of (oldItems as any[])) {
+                        const { data: ex } = await supabase.from("inventory").select("id, quantity").eq("product_id", oi.product_id).eq("warehouse_id", oldRecord.warehouse_id).single()
+                        if (ex) await (supabase.from("inventory") as any).update({ quantity: (ex as any).quantity + oi.quantity } as any).eq("id", (ex as any).id)
+                    }
+                }
+                await supabase.from("stock_movements").delete().eq("reference_id", editingId)
+                await supabase.from("stock_out_items").delete().eq("stock_out_id", editingId)
+                await (supabase.from("stock_out") as any).update({ warehouse_id: form.warehouse_id, date: form.date, notes: form.notes || null } as any).eq("id", editingId)
+            } else {
+                const { data: stockOut, error: hErr } = await (supabase.from("stock_out") as any).insert({ warehouse_id: form.warehouse_id, date: form.date, notes: form.notes || null, created_by: "admin" } as any).select().single()
+                if (hErr) throw hErr
+                stockOutId = (stockOut as any).id
+            }
+
+            // Insert
             await (supabase.from("stock_out_items") as any).insert(validItems.map((i) => {
-                return { stock_out_id: (stockOut as any).id, product_id: i.product_id, quantity: i.quantity, serial_numbers: i.selected_sns }
+                return { stock_out_id: stockOutId, product_id: i.product_id, quantity: i.quantity, serial_numbers: i.selected_sns }
             }) as any)
+
             for (const item of validItems) {
-                const prod = productsList.find((p) => p.id === item.product_id)
-                await (supabase.from("stock_movements") as any).insert({ product_id: item.product_id, warehouse_id: form.warehouse_id, type: "OUT", quantity: item.quantity, reference_id: (stockOut as any).id, notes: form.notes ? `Stock Out #${(stockOut as any).id.slice(0, 8)} - ${form.notes}` : `Stock Out #${(stockOut as any).id.slice(0, 8)}`, serial_numbers: item.selected_sns } as any)
+                await (supabase.from("stock_movements") as any).insert({ product_id: item.product_id, warehouse_id: form.warehouse_id, type: "OUT", quantity: item.quantity, reference_id: stockOutId, notes: form.notes ? `Stock Out #${stockOutId!.slice(0, 8)} - ${form.notes}` : `Stock Out #${stockOutId!.slice(0, 8)}`, serial_numbers: item.selected_sns } as any)
                 const { data: ex } = await supabase.from("inventory").select("id, quantity").eq("product_id", item.product_id).eq("warehouse_id", form.warehouse_id).single()
                 if (ex) await (supabase.from("inventory") as any).update({ quantity: Math.max(0, (ex as any).quantity - item.quantity) } as any).eq("id", (ex as any).id)
             }
-            toast({ title: t.stockOutRecorded }); setDialogOpen(false); resetForm(); fetchData()
+
+            toast({ title: editingId ? (t as any).stockOutUpdated || "อัปเดตเรียบร้อย" : t.stockOutRecorded }); setDialogOpen(false); resetForm(); fetchData()
         } catch (err: any) { toast({ title: "Error", description: err.message, variant: "destructive" }) }
         setSaving(false)
     }
@@ -228,6 +269,7 @@ export default function StockOutPage() {
                                 <TableHead>{t.reference}</TableHead><TableHead>{t.date}</TableHead>
                                 <TableHead>{t.warehouse}</TableHead><TableHead>{t.product}</TableHead><TableHead>{t.note}</TableHead>
                                 <TableHead className="text-right">{t.totalQty}</TableHead>
+                                <TableHead className="text-right">{t.actions}</TableHead>
                             </TableRow></TableHeader>
                             <TableBody>
                                 {records.map((r) => (
@@ -238,6 +280,12 @@ export default function StockOutPage() {
                                         <TableCell><div className="flex flex-wrap gap-1">{r.stock_out_items?.slice(0, 2).map((i: any, idx: number) => (<span key={idx} className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{i.products?.name}</span>))}</div></TableCell>
                                         <TableCell className="text-sm text-slate-500 max-w-[200px] truncate">{r.notes || "—"}</TableCell>
                                         <TableCell className="text-right"><span className="text-sm font-semibold text-red-500">-{formatNumber(totalItems(r))}</span></TableCell>
+                                        <TableCell className="text-right">
+                                            <div className="flex justify-end gap-1">
+                                                <Button size="icon" variant="ghost" className="w-7 h-7 hover:bg-violet-50 hover:text-violet-600" onClick={(e) => { e.stopPropagation(); setSelectedRecord(r); setDetailsOpen(true); }}><Eye className="w-3.5 h-3.5" /></Button>
+                                                {isAdmin && <Button size="icon" variant="ghost" className="w-7 h-7 hover:bg-blue-50 hover:text-blue-600" onClick={(e) => { e.stopPropagation(); openEdit(r); }}><Edit2 className="w-3.5 h-3.5" /></Button>}
+                                            </div>
+                                        </TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>
@@ -246,9 +294,9 @@ export default function StockOutPage() {
                 </CardContent></Card>
             </div>
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <Dialog open={dialogOpen} onOpenChange={(o) => { if (!o) resetForm(); setDialogOpen(o) }}>
                 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader><DialogTitle className="flex items-center gap-2"><PackageMinus className="w-5 h-5 text-red-500" />{t.newStockOut}</DialogTitle></DialogHeader>
+                    <DialogHeader><DialogTitle className="flex items-center gap-2"><PackageMinus className="w-5 h-5 text-red-500" />{editingId ? (t as any).editProduct || "แก้ไขรายการ" : t.newStockOut}</DialogTitle></DialogHeader>
                     <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1.5"><Label>{t.date} *</Label><Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></div>
@@ -261,7 +309,7 @@ export default function StockOutPage() {
                         </div>
                         <div className="space-y-1.5"><Label>{t.note}</Label><Input placeholder={t.note} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
                         <div className="space-y-2">
-                            <div className="flex items-center justify-between"><Label>{t.products}</Label><Button size="sm" variant="outline" onClick={() => setItems([...items, { product_id: "", quantity: 1, selected_sns: [] }])} className="gap-1 h-7 text-xs"><Plus className="w-3 h-3" />{t.addRow}</Button></div>
+                            <div className="flex items-center justify-between"><Label>{t.products}</Label><Button size="sm" variant="outline" onClick={() => { setItems([...items, { product_id: "", quantity: 1, selected_sns: [] }]); setItemSearch([...itemSearch, ""]) }} className="gap-1 h-7 text-xs"><Plus className="w-3 h-3" />{t.addRow}</Button></div>
                             <div className="rounded-xl border border-slate-200 overflow-hidden">
                                 <Table>
                                     <TableHeader><TableRow><TableHead>{t.product}</TableHead><TableHead className="w-32">{t.quantity}</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
@@ -273,19 +321,60 @@ export default function StockOutPage() {
                                                 <React.Fragment key={i}>
                                                     <TableRow>
                                                         <TableCell className="py-2">
-                                                            <Select value={item.product_id} onValueChange={(v) => onProductChange(i, v)}>
-                                                                <SelectTrigger className="h-8"><SelectValue placeholder={t.selectProduct} /></SelectTrigger>
-                                                                <SelectContent>
-                                                                    {productsList.filter(p => warehouseInventory.some(inv => inv.product_id === p.id)).map((p) => {
-                                                                        const inv = warehouseInventory.find(inv => inv.product_id === p.id)
-                                                                        return <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku}) [มี {inv?.quantity}]</SelectItem>
-                                                                    })}
-                                                                    {warehouseInventory.length === 0 && <div className="p-2 text-sm text-slate-500 text-center">กรุณาเลือกคลังที่มีสินค้า</div>}
-                                                                </SelectContent>
-                                                            </Select>
+                                                            <div className="relative group">
+                                                                <Input 
+                                                                    placeholder={t.selectProduct} 
+                                                                    className="h-8 pr-8"
+                                                                    value={itemSearch[i] || (productsList.find(p => p.id === item.product_id)?.name || "")}
+                                                                    onChange={(e) => {
+                                                                        const val = e.target.value
+                                                                        const newSearch = [...itemSearch]
+                                                                        newSearch[i] = val
+                                                                        setItemSearch(newSearch)
+                                                                    }}
+                                                                />
+                                                                <div className="absolute top-full left-0 w-full z-50 bg-white border border-slate-200 rounded-lg shadow-xl hidden group-focus-within:block max-h-48 overflow-y-auto">
+                                                                    {productsList.filter(p => !itemSearch[i] || p.name.toLowerCase().includes(itemSearch[i].toLowerCase()) || p.sku.toLowerCase().includes(itemSearch[i].toLowerCase()))
+                                                                        .filter(p => warehouseInventory.some(inv => inv.product_id === p.id))
+                                                                        .map(p => {
+                                                                            const inv = warehouseInventory.find(inv => inv.product_id === p.id)
+                                                                            return (
+                                                                                <div 
+                                                                                    key={p.id} 
+                                                                                    className="px-3 py-1.5 text-xs hover:bg-red-50 cursor-pointer flex justify-between border-b border-slate-50 last:border-0"
+                                                                                    onMouseDown={() => {
+                                                                                        onProductChange(i, p.id)
+                                                                                        const newSearch = [...itemSearch]
+                                                                                        newSearch[i] = ""
+                                                                                        setItemSearch(newSearch)
+                                                                                    }}
+                                                                                >
+                                                                                    <div>
+                                                                                        <span className="font-medium">{p.name}</span>
+                                                                                        <code className="text-[10px] text-slate-400 ml-2">{p.sku}</code>
+                                                                                    </div>
+                                                                                    <span className="text-[10px] font-bold text-red-600">Stock: {inv?.quantity}</span>
+                                                                                </div>
+                                                                            )
+                                                                        })}
+                                                                    {warehouseInventory.length === 0 && (
+                                                                        <div className="p-3 text-xs text-slate-400 text-center italic">กรุณาเลือกคลังที่มีสินค้า</div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
                                                         </TableCell>
-                                                        <TableCell className="py-2"><Input type="number" min={1} value={item.quantity} onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, quantity: parseInt(e.target.value) || 1, selected_sns: [] } : x))} className="h-8" /></TableCell>
-                                                        <TableCell className="py-2"><Button size="icon" variant="ghost" className="w-7 h-7 hover:bg-red-50 hover:text-red-600" onClick={() => { setItems(items.filter((_, idx) => idx !== i)); setAvailableSnMap(prev => { const n = { ...prev }; delete n[i]; return n }) }} disabled={items.length === 1}><X className="w-3.5 h-3.5" /></Button></TableCell>
+                                                        <TableCell className="py-2">
+                                                            <Input 
+                                                                type="number" 
+                                                                value={item.quantity === 0 ? "" : item.quantity} 
+                                                                onChange={(e) => {
+                                                                    const val = e.target.value === "" ? 0 : (parseInt(e.target.value) || 0)
+                                                                    setItems(items.map((x, idx) => idx === i ? { ...x, quantity: val, selected_sns: [] } : x))
+                                                                }} 
+                                                                className="h-8" 
+                                                            />
+                                                        </TableCell>
+                                                        <TableCell className="py-2"><Button size="icon" variant="ghost" className="w-7 h-7 hover:bg-red-50 hover:text-red-600" onClick={() => { setItems(items.filter((_, idx) => idx !== i)); setAvailableSnMap(prev => { const n = { ...prev }; delete n[i]; return n }); setItemSearch(itemSearch.filter((_, idx) => idx !== i)) }} disabled={items.length === 1}><X className="w-3.5 h-3.5" /></Button></TableCell>
                                                     </TableRow>
                                                     {product?.requires_sn && (
                                                         <TableRow>

@@ -102,7 +102,7 @@ export default function ReportsPage() {
             if (mData) setMovementsData(mData)
             
             const invMap: Record<string, number> = {}
-            invData?.forEach(i => { invMap[i.product_id] = (invMap[i.product_id] || 0) + i.quantity })
+            invData?.forEach((i: any) => { invMap[i.product_id] = (invMap[i.product_id] || 0) + i.quantity })
             setInventoryMap(invMap)
         } catch (e) { console.error(e) }
         setLoading(false)

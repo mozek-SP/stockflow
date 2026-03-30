@@ -17,7 +17,7 @@ import { useLang } from "@/lib/i18n"
 import { useMockStore } from "@/lib/mock-store"
 import { useAuth } from "@/contexts/AuthContext"
 import { formatDate, formatNumber } from "@/lib/utils"
-import { Plus, Sliders, TrendingUp, TrendingDown, Barcode, ClipboardList, CheckSquare, Square } from "lucide-react"
+import { Plus, Sliders, TrendingUp, TrendingDown, Barcode, ClipboardList, CheckSquare, Square, Search, Edit2, Eye } from "lucide-react"
 
 function getAvailableSnFromMovements(movements: any[], productId: string, warehouseId?: string): string[] {
     const relevant = movements.filter(m => {
@@ -50,8 +50,10 @@ export default function AdjustmentsPage() {
     const [saving, setSaving] = useState(false)
     const [detailsOpen, setDetailsOpen] = useState(false)
     const [selectedRecord, setSelectedRecord] = useState<any>(null)
+    const [editingId, setEditingId] = useState<string | null>(null)
     const [systemQty, setSystemQty] = useState(0)
     const [form, setForm] = useState({ product_id: "", warehouse_id: "", actual_qty: "", reason: "", serial_numbers: "", selected_sns: [] as string[] })
+    const [itemSearch, setItemSearch] = useState("")
     const [availableSns, setAvailableSns] = useState<string[]>([])
     const { toast } = useToast()
     const supabase = createClient()
@@ -74,7 +76,7 @@ export default function AdjustmentsPage() {
             { data: whData }
         ] = await Promise.all([
             supabase.from("stock_adjustments").select("*, products(name, sku, requires_sn), warehouses(name)").order("created_at", { ascending: false }).limit(50),
-            supabase.from("products").select("id, name, sku, requires_sn").order("name"),
+            supabase.from("products").select("id, name, sku, requires_sn").order("sku"),
             supabase.from("warehouses").select("id, name").order("name")
         ])
         setRecords((adjData as any) || [])
@@ -83,7 +85,29 @@ export default function AdjustmentsPage() {
         setLoading(false)
     }
 
-    function resetForm() { setForm({ product_id: "", warehouse_id: "", actual_qty: "", reason: "", serial_numbers: "", selected_sns: [] }); setSystemQty(0); setAvailableSns([]) }
+    function resetForm() { 
+        setForm({ product_id: "", warehouse_id: "", actual_qty: "", reason: "", serial_numbers: "", selected_sns: [] }); 
+        setSystemQty(0); 
+        setAvailableSns([]); 
+        setItemSearch("");
+        setEditingId(null);
+    }
+
+    async function openEdit(r: any) {
+        setEditingId(r.id)
+        setForm({
+            product_id: r.product_id,
+            warehouse_id: r.warehouse_id,
+            actual_qty: r.actual_qty.toString(),
+            reason: r.reason || "",
+            serial_numbers: r.difference > 0 ? (r.serial_numbers || []).join(",") : "",
+            selected_sns: r.difference < 0 ? (r.serial_numbers || []) : []
+        })
+        setSystemQty(r.system_qty)
+        setItemSearch(r.products?.name || "")
+        await loadAvailableSns(r.product_id, r.warehouse_id)
+        setDialogOpen(true)
+    }
 
     async function loadAvailableSns(productId: string, warehouseId: string) {
         if (!productId || !warehouseId) return
@@ -162,13 +186,30 @@ export default function AdjustmentsPage() {
             const sns = prod?.requires_sn && diff !== 0
                 ? (diff < 0 ? form.selected_sns : (form.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s))
                 : []
-            const { data: adj, error } = await (supabase.from("stock_adjustments") as any).insert({ product_id: form.product_id, warehouse_id: form.warehouse_id, system_qty: systemQty, actual_qty: actualQty, difference: diff, reason: form.reason || null, created_by: "admin" } as any).select().single()
-            if (error) throw error
-            await (supabase.from("stock_movements") as any).insert({ product_id: form.product_id, warehouse_id: form.warehouse_id, type: "ADJUSTMENT", quantity: Math.abs(diff), notes: `Adjustment: ${diff > 0 ? "+" : ""}${diff}. Reason: ${form.reason || "N/A"}`, reference_id: adj?.id, serial_numbers: sns } as any)
-            const { data: inv } = await supabase.from("inventory").select("id").eq("product_id", form.product_id).eq("warehouse_id", form.warehouse_id).single()
-            if (inv) await (supabase.from("inventory") as any).update({ quantity: actualQty } as any).eq("id", (inv as any).id)
+            
+            let adjId = editingId
+            if (editingId) {
+                const oldRecord = records.find(r => r.id === editingId)
+                if (oldRecord) {
+                    const { data: ex } = await supabase.from("inventory").select("id, quantity").eq("product_id", oldRecord.product_id).eq("warehouse_id", oldRecord.warehouse_id).single()
+                    if (ex) await (supabase.from("inventory") as any).update({ quantity: (ex as any).quantity - oldRecord.difference } as any).eq("id", (ex as any).id)
+                }
+                await supabase.from("stock_movements").delete().eq("reference_id", editingId)
+                await (supabase.from("stock_adjustments") as any).update({ product_id: form.product_id, warehouse_id: form.warehouse_id, system_qty: systemQty, actual_qty: actualQty, difference: diff, reason: form.reason || null } as any).eq("id", editingId)
+            } else {
+                const { data: adj, error: hErr } = await (supabase.from("stock_adjustments") as any).insert({ product_id: form.product_id, warehouse_id: form.warehouse_id, system_qty: systemQty, actual_qty: actualQty, difference: diff, reason: form.reason || null, created_by: "admin" } as any).select().single()
+                if (hErr) throw hErr
+                adjId = (adj as any).id
+            }
+
+            if (diff !== 0) {
+                 await (supabase.from("stock_movements") as any).insert({ product_id: form.product_id, warehouse_id: form.warehouse_id, type: "ADJUSTMENT", quantity: Math.abs(diff), notes: `Adjustment: ${diff > 0 ? "+" : ""}${diff}. Reason: ${form.reason || "N/A"}`, reference_id: adjId, serial_numbers: sns } as any)
+            }
+            const { data: inv } = await supabase.from("inventory").select("id, quantity").eq("product_id", form.product_id).eq("warehouse_id", form.warehouse_id).single()
+            if (inv) await (supabase.from("inventory") as any).update({ quantity: (inv as any).quantity + diff } as any).eq("id", (inv as any).id)
             else await (supabase.from("inventory") as any).insert({ product_id: form.product_id, warehouse_id: form.warehouse_id, quantity: actualQty } as any)
-            toast({ title: t.adjustmentRecorded }); setDialogOpen(false); resetForm(); fetchData()
+
+            toast({ title: editingId ? (t as any).adjustmentUpdated || "อัปเดตเรียบร้อย" : t.adjustmentRecorded }); setDialogOpen(false); resetForm(); fetchData()
         } catch (err: any) { toast({ title: "Error", description: err.message, variant: "destructive" }) }
         setSaving(false)
     }
@@ -190,6 +231,7 @@ export default function AdjustmentsPage() {
                                 <TableHead>{t.warehouse}</TableHead><TableHead className="text-right">{t.systemQty}</TableHead>
                                 <TableHead className="text-right">{t.actualQty}</TableHead><TableHead className="text-right">{t.difference}</TableHead>
                                 <TableHead>{t.reason}</TableHead>
+                                <TableHead className="text-right">{t.actions}</TableHead>
                             </TableRow></TableHeader>
                             <TableBody>
                                 {records.map((r) => (
@@ -207,6 +249,12 @@ export default function AdjustmentsPage() {
                                             </div>
                                         </TableCell>
                                         <TableCell className="text-sm text-slate-500 max-w-[180px] truncate">{r.reason || "—"}</TableCell>
+                                        <TableCell className="text-right">
+                                            <div className="flex justify-end gap-1">
+                                                <Button size="icon" variant="ghost" className="w-7 h-7 hover:bg-violet-50 hover:text-violet-600" onClick={(e) => { e.stopPropagation(); setSelectedRecord(r); setDetailsOpen(true); }}><Eye className="w-3.5 h-3.5" /></Button>
+                                                {isAdmin && <Button size="icon" variant="ghost" className="w-7 h-7 hover:bg-blue-50 hover:text-blue-600" onClick={(e) => { e.stopPropagation(); openEdit(r); }}><Edit2 className="w-3.5 h-3.5" /></Button>}
+                                            </div>
+                                        </TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>
@@ -215,15 +263,35 @@ export default function AdjustmentsPage() {
                 </CardContent></Card>
             </div>
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <Dialog open={dialogOpen} onOpenChange={(o) => { if (!o) resetForm(); setDialogOpen(o) }}>
                 <DialogContent className="max-w-md">
-                    <DialogHeader><DialogTitle className="flex items-center gap-2"><Sliders className="w-5 h-5 text-violet-600" />{t.newAdjustment}</DialogTitle></DialogHeader>
+                    <DialogHeader><DialogTitle className="flex items-center gap-2"><Sliders className="w-5 h-5 text-violet-600" />{editingId ? (t as any).editProduct || "แก้ไขรายการ" : t.newAdjustment}</DialogTitle></DialogHeader>
                     <div className="space-y-4">
                         <div className="space-y-1.5"><Label>{t.product} *</Label>
-                            <Select value={form.product_id} onValueChange={(v) => { setForm({ ...form, product_id: v }); onProductWarehouseChange(v, form.warehouse_id) }}>
-                                <SelectTrigger><SelectValue placeholder={t.selectProduct} /></SelectTrigger>
-                                <SelectContent>{productsList.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}</SelectContent>
-                            </Select>
+                            <div className="relative group">
+                                <Input 
+                                    placeholder={t.selectProduct} 
+                                    className="h-9 pr-8"
+                                    value={itemSearch}
+                                    onChange={(e) => setItemSearch(e.target.value)}
+                                />
+                                <div className="absolute top-full left-0 w-full z-50 bg-white border border-slate-200 rounded-lg shadow-xl hidden group-focus-within:block max-h-48 overflow-y-auto">
+                                    {productsList.filter(p => !itemSearch || p.name.toLowerCase().includes(itemSearch.toLowerCase()) || p.sku.toLowerCase().includes(itemSearch.toLowerCase())).map(p => (
+                                        <div 
+                                            key={p.id} 
+                                            className="px-3 py-2 text-sm hover:bg-violet-50 cursor-pointer flex justify-between border-b border-slate-50 last:border-0"
+                                            onMouseDown={() => {
+                                                setForm({ ...form, product_id: p.id }); 
+                                                onProductWarehouseChange(p.id, form.warehouse_id)
+                                                setItemSearch(p.name)
+                                            }}
+                                        >
+                                            <span className="font-medium">{p.name}</span>
+                                            <code className="text-xs text-slate-400">{p.sku}</code>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
                         <div className="space-y-1.5"><Label>{t.warehouse} *</Label>
                             <Select value={form.warehouse_id} onValueChange={(v) => { setForm({ ...form, warehouse_id: v }); onProductWarehouseChange(form.product_id, v) }}>
@@ -234,7 +302,13 @@ export default function AdjustmentsPage() {
                         <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
                             <div className="flex justify-between text-sm"><span className="text-slate-500">{t.systemQuantity}</span><span className="font-semibold">{formatNumber(systemQty)}</span></div>
                             <div className="space-y-1.5"><Label>{t.actualQuantity}</Label>
-                                <Input type="number" min={0} placeholder="0" value={form.actual_qty} onChange={(e) => setForm({ ...form, actual_qty: e.target.value })} />
+                                <Input 
+                                    type="number" 
+                                    min={0} 
+                                    placeholder="0" 
+                                    value={form.actual_qty === "" ? "" : form.actual_qty} 
+                                    onChange={(e) => setForm({ ...form, actual_qty: e.target.value })} 
+                                />
                             </div>
                             {form.actual_qty !== "" && (
                                 <div className="flex justify-between text-sm pt-1 border-t border-slate-200">

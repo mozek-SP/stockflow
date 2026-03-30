@@ -16,7 +16,7 @@ import { useLang } from "@/lib/i18n"
 import { useMockStore } from "@/lib/mock-store"
 import { useAuth } from "@/contexts/AuthContext"
 import { formatDate, formatNumber } from "@/lib/utils"
-import { Plus, GitMerge, X, ArrowRight, Barcode, ClipboardList, CheckSquare, Square } from "lucide-react"
+import { Plus, GitMerge, X, ArrowRight, Barcode, ClipboardList, CheckSquare, Square, Search, Edit2, Eye } from "lucide-react"
 
 interface LineItem { product_id: string; quantity: number; selected_sns: string[] }
 
@@ -52,8 +52,10 @@ export default function TransfersPage() {
     const [saving, setSaving] = useState(false)
     const [detailsOpen, setDetailsOpen] = useState(false)
     const [selectedRecord, setSelectedRecord] = useState<any>(null)
+    const [editingId, setEditingId] = useState<string | null>(null)
     const [form, setForm] = useState({ from_warehouse_id: "", to_warehouse_id: "", date: new Date().toISOString().split("T")[0], notes: "" })
     const [items, setItems] = useState<LineItem[]>([{ product_id: "", quantity: 1, selected_sns: [] }])
+    const [itemSearch, setItemSearch] = useState<string[]>([])
     const [availableSnMap, setAvailableSnMap] = useState<Record<number, string[]>>({})
     const [warehouseInventory, setWarehouseInventory] = useState<any[]>([])
     const { toast } = useToast()
@@ -76,7 +78,7 @@ export default function TransfersPage() {
             { data: whData }
         ] = await Promise.all([
             supabase.from("stock_transfers").select("*, from_warehouse:warehouses!from_warehouse_id(name), to_warehouse:warehouses!to_warehouse_id(name), stock_transfer_items(quantity, serial_numbers, products(name, sku, requires_sn))").order("created_at", { ascending: false }).limit(50),
-            supabase.from("products").select("id, name, sku, requires_sn").order("name"),
+            supabase.from("products").select("id, name, sku, requires_sn").order("sku"),
             supabase.from("warehouses").select("id, name").order("name")
         ])
         setRecords((trData as any) || [])
@@ -88,8 +90,29 @@ export default function TransfersPage() {
     function resetForm() {
         setForm({ from_warehouse_id: "", to_warehouse_id: "", date: new Date().toISOString().split("T")[0], notes: "" })
         setItems([{ product_id: "", quantity: 1, selected_sns: [] }])
+        setItemSearch([""])
         setAvailableSnMap({})
         setWarehouseInventory([])
+        setEditingId(null)
+    }
+
+    async function openEdit(r: any) {
+        setEditingId(r.id)
+        setForm({
+            from_warehouse_id: r.from_warehouse_id || "",
+            to_warehouse_id: r.to_warehouse_id || "",
+            date: r.date,
+            notes: r.notes || ""
+        })
+        const mappedItems = r.stock_transfer_items.map((i: any) => ({
+            product_id: i.product_id,
+            quantity: i.quantity,
+            selected_sns: i.serial_numbers || []
+        }))
+        setItems(mappedItems)
+        setItemSearch(mappedItems.map(() => ""))
+        await onFromWarehouseChange(r.from_warehouse_id, mappedItems)
+        setDialogOpen(true)
     }
 
     async function loadAvailableSns(itemIndex: number, productId: string, warehouseId: string) {
@@ -115,10 +138,10 @@ export default function TransfersPage() {
         if (productId && form.from_warehouse_id) loadAvailableSns(i, productId, form.from_warehouse_id)
     }
 
-    async function onFromWarehouseChange(warehouseId: string) {
-        setForm({ ...form, from_warehouse_id: warehouseId })
-        items.forEach((item, i) => { if (item.product_id) loadAvailableSns(i, item.product_id, warehouseId) })
-        setItems(items.map(x => ({ ...x, selected_sns: [] })))
+    async function onFromWarehouseChange(warehouseId: string, currentItems?: LineItem[]) {
+        const activeItems = currentItems || items
+        setForm(prev => ({ ...prev, from_warehouse_id: warehouseId }))
+        activeItems.forEach((item, i) => { if (item.product_id) loadAvailableSns(i, item.product_id, warehouseId) })
 
         if (!warehouseId) {
             setWarehouseInventory([])
@@ -183,15 +206,41 @@ export default function TransfersPage() {
 
         setSaving(true)
         try {
-            const { data: tr, error } = await (supabase.from("stock_transfers") as any).insert({ from_warehouse_id: form.from_warehouse_id, to_warehouse_id: form.to_warehouse_id, date: form.date, status: "completed", notes: form.notes || null, created_by: "admin" } as any).select().single()
-            if (error) throw error
+            let trId = editingId
+            
+            if (editingId) {
+                // Revert
+                const { data: oldItems } = await supabase.from("stock_transfer_items").select("*").eq("transfer_id", editingId)
+                const oldRecord = records.find(r => r.id === editingId)
+                if (oldItems && oldRecord) {
+                    for (const oi of (oldItems as any[])) {
+                        // Return to source
+                        const { data: exFrom } = await supabase.from("inventory").select("id, quantity").eq("product_id", oi.product_id).eq("warehouse_id", oldRecord.from_warehouse_id).single()
+                        if (exFrom) await (supabase.from("inventory") as any).update({ quantity: (exFrom as any).quantity + oi.quantity } as any).eq("id", (exFrom as any).id)
+                        
+                        // Remove from destination
+                        const { data: exTo } = await supabase.from("inventory").select("id, quantity").eq("product_id", oi.product_id).eq("warehouse_id", oldRecord.to_warehouse_id).single()
+                        if (exTo) await (supabase.from("inventory") as any).update({ quantity: Math.max(0, (exTo as any).quantity - oi.quantity) } as any).eq("id", (exTo as any).id)
+                    }
+                }
+                await supabase.from("stock_movements").delete().eq("reference_id", editingId)
+                await supabase.from("stock_transfer_items").delete().eq("transfer_id", editingId)
+                await (supabase.from("stock_transfers") as any).update({ from_warehouse_id: form.from_warehouse_id, to_warehouse_id: form.to_warehouse_id, date: form.date, notes: form.notes || null } as any).eq("id", editingId)
+            } else {
+                const { data: tr, error: hErr } = await (supabase.from("stock_transfers") as any).insert({ from_warehouse_id: form.from_warehouse_id, to_warehouse_id: form.to_warehouse_id, date: form.date, status: "completed", notes: form.notes || null, created_by: "admin" } as any).select().single()
+                if (hErr) throw hErr
+                trId = (tr as any).id
+            }
+
+            // Insert
             await (supabase.from("stock_transfer_items") as any).insert(validItems.map((i) => {
-                return { transfer_id: (tr as any).id, product_id: i.product_id, quantity: i.quantity, serial_numbers: i.selected_sns }
+                return { transfer_id: trId, product_id: i.product_id, quantity: i.quantity, serial_numbers: i.selected_sns }
             }) as any)
+
             for (const item of validItems) {
                 await (supabase.from("stock_movements") as any).insert([
-                    { product_id: item.product_id, warehouse_id: form.from_warehouse_id, type: "TRANSFER_OUT", quantity: item.quantity, reference_id: (tr as any).id, notes: form.notes ? `Transfer Out - ${form.notes}` : null, serial_numbers: item.selected_sns },
-                    { product_id: item.product_id, warehouse_id: form.to_warehouse_id, type: "TRANSFER_IN", quantity: item.quantity, reference_id: (tr as any).id, notes: form.notes ? `Transfer In - ${form.notes}` : null, serial_numbers: item.selected_sns },
+                    { product_id: item.product_id, warehouse_id: form.from_warehouse_id, type: "TRANSFER_OUT", quantity: item.quantity, reference_id: trId, notes: form.notes ? `Transfer Out - ${form.notes}` : null, serial_numbers: item.selected_sns },
+                    { product_id: item.product_id, warehouse_id: form.to_warehouse_id, type: "TRANSFER_IN", quantity: item.quantity, reference_id: trId, notes: form.notes ? `Transfer In - ${form.notes}` : null, serial_numbers: item.selected_sns },
                 ] as any)
                 const { data: fromInv } = await supabase.from("inventory").select("id, quantity").eq("product_id", item.product_id).eq("warehouse_id", form.from_warehouse_id).single()
                 if (fromInv) await ((supabase.from("inventory") as any).update({ quantity: Math.max(0, (fromInv as any).quantity - item.quantity) } as any) as any).eq("id", (fromInv as any).id)
@@ -199,7 +248,8 @@ export default function TransfersPage() {
                 if (toInv) await ((supabase.from("inventory") as any).update({ quantity: (toInv as any).quantity + item.quantity } as any) as any).eq("id", (toInv as any).id)
                 else await (supabase.from("inventory") as any).insert([{ product_id: item.product_id, warehouse_id: form.to_warehouse_id, quantity: item.quantity }] as any)
             }
-            toast({ title: t.transferRecorded }); setDialogOpen(false); resetForm(); fetchData()
+
+            toast({ title: editingId ? (t as any).transferUpdated || "อัปเดตเรียบร้อย" : t.transferRecorded }); setDialogOpen(false); resetForm(); fetchData()
         } catch (err: any) { toast({ title: "Error", description: err.message, variant: "destructive" }) }
         setSaving(false)
     }
@@ -223,6 +273,7 @@ export default function TransfersPage() {
                                 <TableHead>{t.fromWarehouse}</TableHead><TableHead></TableHead>
                                 <TableHead>{t.toWarehouse}</TableHead><TableHead>{t.product}</TableHead><TableHead>{t.note}</TableHead>
                                 <TableHead className="text-right">{t.totalQty}</TableHead>
+                                <TableHead className="text-right">{t.actions}</TableHead>
                             </TableRow></TableHeader>
                             <TableBody>
                                 {records.map((r) => (
@@ -235,6 +286,12 @@ export default function TransfersPage() {
                                         <TableCell><div className="flex flex-wrap gap-1">{r.stock_transfer_items?.slice(0, 2).map((i: any, idx: number) => (<span key={idx} className="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{i.products?.name}</span>))}</div></TableCell>
                                         <TableCell className="text-sm text-slate-500 max-w-[200px] truncate">{r.notes || "—"}</TableCell>
                                         <TableCell className="text-right"><span className="text-sm font-semibold text-violet-600">{formatNumber(totalItems(r))}</span></TableCell>
+                                        <TableCell className="text-right">
+                                            <div className="flex justify-end gap-1">
+                                                <Button size="icon" variant="ghost" className="w-7 h-7 hover:bg-violet-50 hover:text-violet-600" onClick={(e) => { e.stopPropagation(); setSelectedRecord(r); setDetailsOpen(true); }}><Eye className="w-3.5 h-3.5" /></Button>
+                                                {isAdmin && <Button size="icon" variant="ghost" className="w-7 h-7 hover:bg-blue-50 hover:text-blue-600" onClick={(e) => { e.stopPropagation(); openEdit(r); }}><Edit2 className="w-3.5 h-3.5" /></Button>}
+                                            </div>
+                                        </TableCell>
                                     </TableRow>
                                 ))}
                             </TableBody>
@@ -243,9 +300,9 @@ export default function TransfersPage() {
                 </CardContent></Card>
             </div>
 
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <Dialog open={dialogOpen} onOpenChange={(o) => { if (!o) resetForm(); setDialogOpen(o) }}>
                 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                    <DialogHeader><DialogTitle className="flex items-center gap-2"><GitMerge className="w-5 h-5 text-violet-600" />{t.newTransfer}</DialogTitle></DialogHeader>
+                    <DialogHeader><DialogTitle className="flex items-center gap-2"><GitMerge className="w-5 h-5 text-violet-600" />{editingId ? (t as any).editProduct || "แก้ไขรายการ" : t.newTransfer}</DialogTitle></DialogHeader>
                     <div className="space-y-4">
                         <div className="grid grid-cols-3 gap-3 items-end">
                             <div className="space-y-1.5"><Label>{t.fromWarehouse} *</Label>
@@ -267,7 +324,7 @@ export default function TransfersPage() {
                             <div className="flex-1 space-y-1.5"><Label>{t.note}</Label><Input placeholder={t.note} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
                         </div>
                         <div className="space-y-2">
-                            <div className="flex items-center justify-between"><Label>{t.products}</Label><Button size="sm" variant="outline" onClick={() => setItems([...items, { product_id: "", quantity: 1, selected_sns: [] }])} className="gap-1 h-7 text-xs"><Plus className="w-3 h-3" />{t.addRow}</Button></div>
+                            <div className="flex items-center justify-between"><Label>{t.products}</Label><Button size="sm" variant="outline" onClick={() => { setItems([...items, { product_id: "", quantity: 1, selected_sns: [] }]); setItemSearch([...itemSearch, ""]) }} className="gap-1 h-7 text-xs"><Plus className="w-3 h-3" />{t.addRow}</Button></div>
                             <div className="rounded-xl border border-slate-200 overflow-hidden">
                                 <Table>
                                     <TableHeader><TableRow><TableHead>{t.product}</TableHead><TableHead className="w-32">{t.quantity}</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
@@ -279,19 +336,60 @@ export default function TransfersPage() {
                                                 <React.Fragment key={i}>
                                                     <TableRow>
                                                         <TableCell className="py-2">
-                                                            <Select value={item.product_id} onValueChange={(v) => onProductChange(i, v)}>
-                                                                <SelectTrigger className="h-8"><SelectValue placeholder={t.selectProduct} /></SelectTrigger>
-                                                                <SelectContent>
-                                                                    {productsList.filter(p => warehouseInventory.some(inv => inv.product_id === p.id)).map((p) => {
-                                                                        const inv = warehouseInventory.find(inv => inv.product_id === p.id)
-                                                                        return <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku}) [มี {inv?.quantity}]</SelectItem>
-                                                                    })}
-                                                                    {warehouseInventory.length === 0 && <div className="p-2 text-sm text-slate-500 text-center">กรุณาเลือกคลังต้นทางที่มีสินค้า</div>}
-                                                                </SelectContent>
-                                                            </Select>
+                                                            <div className="relative group">
+                                                                <Input 
+                                                                    placeholder={t.selectProduct} 
+                                                                    className="h-8 pr-8"
+                                                                    value={itemSearch[i] || (productsList.find(p => p.id === item.product_id)?.name || "")}
+                                                                    onChange={(e) => {
+                                                                        const val = e.target.value
+                                                                        const newSearch = [...itemSearch]
+                                                                        newSearch[i] = val
+                                                                        setItemSearch(newSearch)
+                                                                    }}
+                                                                />
+                                                                <div className="absolute top-full left-0 w-full z-50 bg-white border border-slate-200 rounded-lg shadow-xl hidden group-focus-within:block max-h-48 overflow-y-auto">
+                                                                    {productsList.filter(p => !itemSearch[i] || p.name.toLowerCase().includes(itemSearch[i].toLowerCase()) || p.sku.toLowerCase().includes(itemSearch[i].toLowerCase()))
+                                                                        .filter(p => warehouseInventory.some(inv => inv.product_id === p.id))
+                                                                        .map(p => {
+                                                                            const inv = warehouseInventory.find(inv => inv.product_id === p.id)
+                                                                            return (
+                                                                                <div 
+                                                                                    key={p.id} 
+                                                                                    className="px-3 py-1.5 text-xs hover:bg-violet-50 cursor-pointer flex justify-between border-b border-slate-50 last:border-0"
+                                                                                    onMouseDown={() => {
+                                                                                        onProductChange(i, p.id)
+                                                                                        const newSearch = [...itemSearch]
+                                                                                        newSearch[i] = ""
+                                                                                        setItemSearch(newSearch)
+                                                                                    }}
+                                                                                >
+                                                                                    <div>
+                                                                                        <span className="font-medium">{p.name}</span>
+                                                                                        <code className="text-[10px] text-slate-400 ml-2">{p.sku}</code>
+                                                                                    </div>
+                                                                                    <span className="text-[10px] font-bold text-violet-600">Stock: {inv?.quantity}</span>
+                                                                                </div>
+                                                                            )
+                                                                        })}
+                                                                    {warehouseInventory.length === 0 && (
+                                                                        <div className="p-3 text-xs text-slate-400 text-center italic">กรุณาเลือกคลังต้นทางที่มีสินค้า</div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
                                                         </TableCell>
-                                                        <TableCell className="py-2"><Input type="number" min={1} value={item.quantity} onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, quantity: parseInt(e.target.value) || 1, selected_sns: [] } : x))} className="h-8" /></TableCell>
-                                                        <TableCell className="py-2"><Button size="icon" variant="ghost" className="w-7 h-7 hover:bg-red-50 hover:text-red-600" onClick={() => { setItems(items.filter((_, idx) => idx !== i)); setAvailableSnMap(prev => { const n = { ...prev }; delete n[i]; return n }) }} disabled={items.length === 1}><X className="w-3.5 h-3.5" /></Button></TableCell>
+                                                        <TableCell className="py-2">
+                                                            <Input 
+                                                                type="number" 
+                                                                value={item.quantity === 0 ? "" : item.quantity} 
+                                                                onChange={(e) => {
+                                                                    const val = e.target.value === "" ? 0 : (parseInt(e.target.value) || 0)
+                                                                    setItems(items.map((x, idx) => idx === i ? { ...x, quantity: val, selected_sns: [] } : x))
+                                                                }} 
+                                                                className="h-8" 
+                                                            />
+                                                        </TableCell>
+                                                        <TableCell className="py-2"><Button size="icon" variant="ghost" className="w-7 h-7 hover:bg-red-50 hover:text-red-600" onClick={() => { setItems(items.filter((_, idx) => idx !== i)); setAvailableSnMap(prev => { const n = { ...prev }; delete n[i]; return n }); setItemSearch(itemSearch.filter((_, idx) => idx !== i)) }} disabled={items.length === 1}><X className="w-3.5 h-3.5" /></Button></TableCell>
                                                     </TableRow>
                                                     {product?.requires_sn && (
                                                         <TableRow>
