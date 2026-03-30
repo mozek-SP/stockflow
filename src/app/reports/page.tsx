@@ -234,16 +234,20 @@ export default function ReportsPage() {
             const filename = `StockFlow_${sheetName}_${todayStr()}.xlsx`
             XLSX.writeFile(wb, filename)
             excelOk(isTH ? `บันทึก ${sheetName} เรียบร้อย` : `${sheetName} exported!`)
+        } catch (err: any) {
+            console.error("Excel Export Error:", err)
+            error(isTH ? "เกิดข้อผิดพลาดในการ Export Excel" : "Excel export failed")
         } finally {
             setExportingXlsx(false)
         }
-    }, [activeTab, selectedProductId, store, isTH])
+    }, [activeTab, selectedProductId, store, isTH, productsData, stockInData, stockOutData, movementsData, inventoryMap, excelOk, error])
 
     // ── PDF Export ────────────────────────────────────────────────────────────
     const exportPdf = useCallback(async () => {
         setExportingPdf(true)
         try {
-            const { default: jsPDF } = await import("jspdf")
+            const pdfModule = await import("jspdf")
+            const jsPDF = pdfModule.default || (pdfModule as any).jsPDF
             const autoTable = (await import("jspdf-autotable")).default
 
             let data: any[] = []
@@ -357,10 +361,13 @@ export default function ReportsPage() {
             const filename = `StockFlow_${title}_${todayStr()}.pdf`
             doc.save(filename)
             pdfOk(isTH ? `บันทึก PDF ${title} เรียบร้อย` : `${title} PDF exported!`)
+        } catch (err: any) {
+            console.error("PDF Export Error:", err)
+            error(isTH ? "เกิดข้อผิดพลาดในการ Export PDF" : "PDF export failed")
         } finally {
             setExportingPdf(false)
         }
-    }, [activeTab, selectedProductId, store, isTH])
+    }, [activeTab, selectedProductId, store, isTH, productsData, stockInData, stockOutData, movementsData, inventoryMap, pdfOk, error])
 
     // ── Preview table ─────────────────────────────────────────────────────────
     const currentTab = REPORT_TABS.find(t => t.id === activeTab)!
