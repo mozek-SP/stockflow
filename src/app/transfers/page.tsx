@@ -325,7 +325,7 @@ export default function TransfersPage() {
                         </div>
                         <div className="space-y-2">
                             <div className="flex items-center justify-between"><Label>{t.products}</Label><Button size="sm" variant="outline" onClick={() => { setItems([...items, { product_id: "", quantity: 1, selected_sns: [] }]); setItemSearch([...itemSearch, ""]) }} className="gap-1 h-7 text-xs"><Plus className="w-3 h-3" />{t.addRow}</Button></div>
-                            <div className="rounded-xl border border-slate-200 overflow-hidden">
+                            <div className="rounded-xl border border-slate-200">
                                 <Table>
                                     <TableHeader><TableRow><TableHead>{t.product}</TableHead><TableHead className="w-32">{t.quantity}</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
                                     <TableBody>
