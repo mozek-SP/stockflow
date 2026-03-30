@@ -44,6 +44,8 @@ export default function AdjustmentsPage() {
     const store = useMockStore()
     const [records, setRecords] = useState<any[]>(isSupabaseConfigured ? [] : store.adjustments)
     const [loading, setLoading] = useState(isSupabaseConfigured)
+    const [productsList, setProductsList] = useState<any[]>(isSupabaseConfigured ? [] : store.products)
+    const [warehousesList, setWarehousesList] = useState<any[]>(isSupabaseConfigured ? [] : store.warehouses)
     const [dialogOpen, setDialogOpen] = useState(false)
     const [saving, setSaving] = useState(false)
     const [detailsOpen, setDetailsOpen] = useState(false)
@@ -55,15 +57,29 @@ export default function AdjustmentsPage() {
     const supabase = createClient()
 
     useEffect(() => {
-        if (!isSupabaseConfigured) setRecords(store.adjustments)
-    }, [store.adjustments])
+        if (!isSupabaseConfigured) {
+            setRecords(store.adjustments)
+            setProductsList(store.products)
+            setWarehousesList(store.warehouses)
+        }
+    }, [store.adjustments, store.products, store.warehouses])
 
     useEffect(() => { if (isSupabaseConfigured) { fetchData(); } }, [])
 
     async function fetchData() {
         setLoading(true)
-        const { data } = await supabase.from("stock_adjustments").select("*, products(name, sku, requires_sn), warehouses(name)").order("created_at", { ascending: false }).limit(50)
-        setRecords((data as any) || [])
+        const [
+            { data: adjData },
+            { data: prodData },
+            { data: whData }
+        ] = await Promise.all([
+            supabase.from("stock_adjustments").select("*, products(name, sku, requires_sn), warehouses(name)").order("created_at", { ascending: false }).limit(50),
+            supabase.from("products").select("id, name, sku, requires_sn").order("name"),
+            supabase.from("warehouses").select("id, name").order("name")
+        ])
+        setRecords((adjData as any) || [])
+        if (prodData) setProductsList(prodData)
+        if (whData) setWarehousesList(whData)
         setLoading(false)
     }
 
@@ -71,7 +87,7 @@ export default function AdjustmentsPage() {
 
     async function loadAvailableSns(productId: string, warehouseId: string) {
         if (!productId || !warehouseId) return
-        const product = store.products.find(p => p.id === productId)
+        const product = productsList.find(p => p.id === productId)
         if (!product?.requires_sn) return
         if (!isSupabaseConfigured) {
             setAvailableSns(getAvailableSnFromMovements(store.movements, productId, warehouseId))
@@ -102,7 +118,7 @@ export default function AdjustmentsPage() {
         const actualQty = parseInt(form.actual_qty)
         const diff = actualQty - systemQty
 
-        const prod = store.products.find((p) => p.id === form.product_id)
+        const prod = productsList.find((p) => p.id === form.product_id)
         if (prod?.requires_sn && diff !== 0) {
             if (diff < 0) {
                 // Removing: must select from existing stock S/N
@@ -121,7 +137,7 @@ export default function AdjustmentsPage() {
         }
 
         if (!isSupabaseConfigured) {
-            const prod = store.products.find((p) => p.id === form.product_id)
+            const prod = productsList.find((p) => p.id === form.product_id)
             const wh = store.warehouses.find((w) => w.id === form.warehouse_id)
             const newAdj = {
                 id: `adj-${Date.now()}`,
@@ -206,13 +222,13 @@ export default function AdjustmentsPage() {
                         <div className="space-y-1.5"><Label>{t.product} *</Label>
                             <Select value={form.product_id} onValueChange={(v) => { setForm({ ...form, product_id: v }); onProductWarehouseChange(v, form.warehouse_id) }}>
                                 <SelectTrigger><SelectValue placeholder={t.selectProduct} /></SelectTrigger>
-                                <SelectContent>{store.products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}</SelectContent>
+                                <SelectContent>{productsList.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}</SelectContent>
                             </Select>
                         </div>
                         <div className="space-y-1.5"><Label>{t.warehouse} *</Label>
                             <Select value={form.warehouse_id} onValueChange={(v) => { setForm({ ...form, warehouse_id: v }); onProductWarehouseChange(form.product_id, v) }}>
                                 <SelectTrigger><SelectValue placeholder={t.selectWarehouse} /></SelectTrigger>
-                                <SelectContent>{store.warehouses.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
+                                <SelectContent>{warehousesList.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
                             </Select>
                         </div>
                         <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
@@ -227,7 +243,7 @@ export default function AdjustmentsPage() {
                                 </div>
                             )}
                         </div>
-                        {store.products.find(p => p.id === form.product_id)?.requires_sn && difference !== 0 && (
+                        {productsList.find(p => p.id === form.product_id)?.requires_sn && difference !== 0 && (
                             <div className="space-y-1.5 p-4 bg-slate-50 border border-slate-200 rounded-xl">
                                 <Label className={difference > 0 ? "text-emerald-600" : "text-red-500"}>
                                     {difference > 0 ? `S/N สินค้าที่เพิ่มเข้า (${difference} รายการ)` : `เลือก S/N ที่จะตัดออก (${Math.abs(difference)} รายการ)`}

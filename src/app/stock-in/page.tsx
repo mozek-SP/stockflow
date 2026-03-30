@@ -26,6 +26,9 @@ export default function StockInPage() {
     const store = useMockStore()
     const [records, setRecords] = useState<any[]>(isSupabaseConfigured ? [] : store.stockIns)
     const [loading, setLoading] = useState(isSupabaseConfigured)
+    const [productsList, setProductsList] = useState<any[]>(isSupabaseConfigured ? [] : store.products)
+    const [suppliersList, setSuppliersList] = useState<any[]>(isSupabaseConfigured ? [] : store.suppliers)
+    const [warehousesList, setWarehousesList] = useState<any[]>(isSupabaseConfigured ? [] : store.warehouses)
     const [dialogOpen, setDialogOpen] = useState(false)
     const [saving, setSaving] = useState(false)
     const [detailsOpen, setDetailsOpen] = useState(false)
@@ -36,15 +39,33 @@ export default function StockInPage() {
     const supabase = createClient()
 
     // Live sync from store in mock mode
-    useEffect(() => { if (!isSupabaseConfigured) setRecords(store.stockIns) }, [store.stockIns])
+    useEffect(() => { 
+        if (!isSupabaseConfigured) {
+            setRecords(store.stockIns)
+            setProductsList(store.products)
+            setSuppliersList(store.suppliers)
+            setWarehousesList(store.warehouses)
+        } 
+    }, [store.stockIns, store.products, store.suppliers, store.warehouses])
     useEffect(() => { if (isSupabaseConfigured) { fetchData(); } }, [])
 
     async function fetchData() {
         setLoading(true)
-        const { data } = await supabase.from("stock_in")
-            .select("*, suppliers(name), warehouses(name), stock_in_items(quantity, serial_numbers, products(name, sku, requires_sn))")
-            .order("created_at", { ascending: false }).limit(50)
-        setRecords((data as any) || [])
+        const [
+            { data: inData },
+            { data: prodData },
+            { data: supData },
+            { data: whData }
+        ] = await Promise.all([
+            supabase.from("stock_in").select("*, suppliers(name), warehouses(name), stock_in_items(quantity, serial_numbers, products(name, sku, requires_sn))").order("created_at", { ascending: false }).limit(50),
+            supabase.from("products").select("id, name, sku, requires_sn").order("name"),
+            supabase.from("suppliers").select("id, name").order("name"),
+            supabase.from("warehouses").select("id, name").order("name")
+        ])
+        setRecords((inData as any) || [])
+        if (prodData) setProductsList(prodData)
+        if (supData) setSuppliersList(supData)
+        if (whData) setWarehousesList(whData)
         setLoading(false)
     }
 
@@ -56,7 +77,7 @@ export default function StockInPage() {
         if (validItems.length === 0) { toast({ title: t.addAtLeastOne, variant: "destructive" }); return }
 
         for (const item of validItems) {
-            const product = store.products.find(p => p.id === item.product_id)
+            const product = productsList.find(p => p.id === item.product_id)
             if (product?.requires_sn) {
                 const sns = (item.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s)
                 if (sns.length !== item.quantity) {
@@ -76,14 +97,14 @@ export default function StockInPage() {
                 suppliers: sup ? { name: sup.name } : null,
                 warehouses: wh ? { name: wh.name } : null,
                 stock_in_items: validItems.map((i) => {
-                    const p = store.products.find((p) => p.id === i.product_id);
+                    const p = productsList.find((p) => p.id === i.product_id);
                     const sns = p?.requires_sn ? (i.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s) : [];
                     return { quantity: i.quantity, serial_numbers: sns, products: { name: p?.name || "?", sku: p?.sku || "?", requires_sn: p?.requires_sn || false } }
                 }),
             }
             store.setStockIns([newRecord, ...store.stockIns])
             for (const item of validItems) {
-                const prod = store.products.find((p) => p.id === item.product_id)
+                const prod = productsList.find((p) => p.id === item.product_id)
                 const sns = prod?.requires_sn ? (item.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s) : [];
                 store.addMovement({
                     product_id: item.product_id, warehouse_id: form.warehouse_id,
@@ -102,12 +123,12 @@ export default function StockInPage() {
             const { data: stockIn, error: hErr } = await (supabase.from("stock_in") as any).insert({ supplier_id: form.supplier_id || null, warehouse_id: form.warehouse_id, date: form.date, notes: form.notes || null, created_by: "admin" } as any).select().single()
             if (hErr) throw hErr
             await (supabase.from("stock_in_items") as any).insert(validItems.map((i) => {
-                const product = store.products.find(p => p.id === i.product_id);
+                const product = productsList.find(p => p.id === i.product_id);
                 const sns = product?.requires_sn ? (i.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s) : [];
                 return { stock_in_id: (stockIn as any).id, product_id: i.product_id, quantity: i.quantity, serial_numbers: sns }
             }) as any)
             for (const item of validItems) {
-                const product = store.products.find(p => p.id === item.product_id);
+                const product = productsList.find(p => p.id === item.product_id);
                 const sns = product?.requires_sn ? (item.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s) : [];
                 await (supabase.from("stock_movements") as any).insert({ product_id: item.product_id, warehouse_id: form.warehouse_id, type: "IN", quantity: item.quantity, reference_id: (stockIn as any).id, notes: form.notes ? `Stock In #${(stockIn as any).id.slice(0, 8)} - ${form.notes}` : `Stock In #${(stockIn as any).id.slice(0, 8)}`, serial_numbers: sns } as any)
                 const { data: ex } = await supabase.from("inventory").select("id, quantity").eq("product_id", item.product_id).eq("warehouse_id", form.warehouse_id).single()
@@ -165,13 +186,13 @@ export default function StockInPage() {
                             <div className="space-y-1.5"><Label>{t.warehouse} *</Label>
                                 <Select value={form.warehouse_id} onValueChange={(v) => setForm({ ...form, warehouse_id: v })}>
                                     <SelectTrigger><SelectValue placeholder={t.selectWarehouse} /></SelectTrigger>
-                                    <SelectContent>{store.warehouses.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
+                                    <SelectContent>{warehousesList.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
                                 </Select>
                             </div>
                             <div className="space-y-1.5"><Label>{t.supplier}</Label>
                                 <Select value={form.supplier_id} onValueChange={(v) => setForm({ ...form, supplier_id: v })}>
                                     <SelectTrigger><SelectValue placeholder={t.selectSupplier} /></SelectTrigger>
-                                    <SelectContent>{store.suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+                                    <SelectContent>{suppliersList.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
                                 </Select>
                             </div>
                         </div>
@@ -183,14 +204,14 @@ export default function StockInPage() {
                                     <TableHeader><TableRow><TableHead>{t.product}</TableHead><TableHead className="w-32">{t.quantity}</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
                                     <TableBody>
                                         {items.map((item, i) => {
-                                            const product = store.products.find(p => p.id === item.product_id);
+                                            const product = productsList.find(p => p.id === item.product_id);
                                             return (
                                                 <React.Fragment key={i}>
                                                     <TableRow>
                                                         <TableCell className="py-2">
                                                             <Select value={item.product_id} onValueChange={(v) => setItems(items.map((x, idx) => idx === i ? { ...x, product_id: v } : x))}>
                                                                 <SelectTrigger className="h-8"><SelectValue placeholder={t.selectProduct} /></SelectTrigger>
-                                                                <SelectContent>{store.products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}</SelectContent>
+                                                                <SelectContent>{productsList.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}</SelectContent>
                                                             </Select>
                                                         </TableCell>
                                                         <TableCell className="py-2"><Input type="number" min={1} value={item.quantity} onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, quantity: parseInt(e.target.value) || 1 } : x))} className="h-8" /></TableCell>

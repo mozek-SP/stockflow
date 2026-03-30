@@ -47,6 +47,8 @@ export default function StockOutPage() {
     const store = useMockStore()
     const [records, setRecords] = useState<any[]>(isSupabaseConfigured ? [] : store.stockOuts)
     const [loading, setLoading] = useState(isSupabaseConfigured)
+    const [productsList, setProductsList] = useState<any[]>(isSupabaseConfigured ? [] : store.products)
+    const [warehousesList, setWarehousesList] = useState<any[]>(isSupabaseConfigured ? [] : store.warehouses)
     const [dialogOpen, setDialogOpen] = useState(false)
     const [saving, setSaving] = useState(false)
     const [detailsOpen, setDetailsOpen] = useState(false)
@@ -58,15 +60,29 @@ export default function StockOutPage() {
     const { toast } = useToast()
     const supabase = createClient()
 
-    useEffect(() => { if (!isSupabaseConfigured) setRecords(store.stockOuts) }, [store.stockOuts])
+    useEffect(() => { 
+        if (!isSupabaseConfigured) {
+            setRecords(store.stockOuts)
+            setProductsList(store.products)
+            setWarehousesList(store.warehouses)
+        } 
+    }, [store.stockOuts, store.products, store.warehouses])
     useEffect(() => { if (isSupabaseConfigured) fetchData() }, [])
 
     async function fetchData() {
         setLoading(true)
-        const { data } = await supabase.from("stock_out")
-            .select("*, warehouses(name), stock_out_items(quantity, serial_numbers, products(name, sku, requires_sn))")
-            .order("created_at", { ascending: false }).limit(50)
-        setRecords((data as any) || [])
+        const [
+            { data: outData },
+            { data: prodData },
+            { data: whData }
+        ] = await Promise.all([
+            supabase.from("stock_out").select("*, warehouses(name), stock_out_items(quantity, serial_numbers, products(name, sku, requires_sn))").order("created_at", { ascending: false }).limit(50),
+            supabase.from("products").select("id, name, sku, requires_sn").order("name"),
+            supabase.from("warehouses").select("id, name").order("name")
+        ])
+        setRecords((outData as any) || [])
+        if (prodData) setProductsList(prodData)
+        if (whData) setWarehousesList(whData)
         setLoading(false)
     }
 
@@ -78,7 +94,7 @@ export default function StockOutPage() {
 
     async function loadAvailableSns(itemIndex: number, productId: string, warehouseId: string) {
         if (!productId) return
-        const product = store.products.find(p => p.id === productId)
+        const product = productsList.find(p => p.id === productId)
         if (!product?.requires_sn) return
 
         if (!isSupabaseConfigured) {
@@ -125,7 +141,7 @@ export default function StockOutPage() {
         if (validItems.length === 0) { toast({ title: t.addAtLeastOne, variant: "destructive" }); return }
 
         for (const item of validItems) {
-            const product = store.products.find(p => p.id === item.product_id)
+            const product = productsList.find(p => p.id === item.product_id)
             if (product?.requires_sn) {
                 if (item.selected_sns.length !== item.quantity) {
                     toast({ title: `${product.name}: ต้องเลือก S/N จำนวน ${item.quantity} รายการ (เลือกแล้ว ${item.selected_sns.length})`, variant: "destructive" })
@@ -142,13 +158,13 @@ export default function StockOutPage() {
                 warehouse_id: form.warehouse_id, notes: form.notes || null,
                 warehouses: wh ? { name: wh.name } : null,
                 stock_out_items: validItems.map((i) => {
-                    const p = store.products.find((p) => p.id === i.product_id);
+                    const p = productsList.find((p) => p.id === i.product_id);
                     return { quantity: i.quantity, serial_numbers: i.selected_sns, products: { name: p?.name || "?", sku: p?.sku || "?", requires_sn: p?.requires_sn || false } }
                 }),
             }
             store.setStockOuts([newRecord, ...store.stockOuts])
             for (const item of validItems) {
-                const prod = store.products.find((p) => p.id === item.product_id)
+                const prod = productsList.find((p) => p.id === item.product_id)
                 store.addMovement({
                     product_id: item.product_id, warehouse_id: form.warehouse_id,
                     type: "OUT", quantity: item.quantity,
@@ -169,7 +185,7 @@ export default function StockOutPage() {
                 return { stock_out_id: (stockOut as any).id, product_id: i.product_id, quantity: i.quantity, serial_numbers: i.selected_sns }
             }) as any)
             for (const item of validItems) {
-                const prod = store.products.find((p) => p.id === item.product_id)
+                const prod = productsList.find((p) => p.id === item.product_id)
                 await (supabase.from("stock_movements") as any).insert({ product_id: item.product_id, warehouse_id: form.warehouse_id, type: "OUT", quantity: item.quantity, reference_id: (stockOut as any).id, notes: form.notes ? `Stock Out #${(stockOut as any).id.slice(0, 8)} - ${form.notes}` : `Stock Out #${(stockOut as any).id.slice(0, 8)}`, serial_numbers: item.selected_sns } as any)
                 const { data: ex } = await supabase.from("inventory").select("id, quantity").eq("product_id", item.product_id).eq("warehouse_id", form.warehouse_id).single()
                 if (ex) await (supabase.from("inventory") as any).update({ quantity: Math.max(0, (ex as any).quantity - item.quantity) } as any).eq("id", (ex as any).id)
@@ -224,7 +240,7 @@ export default function StockOutPage() {
                             <div className="space-y-1.5"><Label>{t.warehouse} *</Label>
                                 <Select value={form.warehouse_id} onValueChange={onWarehouseChange}>
                                     <SelectTrigger><SelectValue placeholder={t.selectWarehouse} /></SelectTrigger>
-                                    <SelectContent>{store.warehouses.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
+                                    <SelectContent>{warehousesList.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
                                 </Select>
                             </div>
                         </div>
@@ -236,7 +252,7 @@ export default function StockOutPage() {
                                     <TableHeader><TableRow><TableHead>{t.product}</TableHead><TableHead className="w-32">{t.quantity}</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
                                     <TableBody>
                                         {items.map((item, i) => {
-                                            const product = store.products.find(p => p.id === item.product_id);
+                                            const product = productsList.find(p => p.id === item.product_id);
                                             const availSns = availableSnMap[i] || []
                                             return (
                                                 <React.Fragment key={i}>
@@ -244,7 +260,7 @@ export default function StockOutPage() {
                                                         <TableCell className="py-2">
                                                             <Select value={item.product_id} onValueChange={(v) => onProductChange(i, v)}>
                                                                 <SelectTrigger className="h-8"><SelectValue placeholder={t.selectProduct} /></SelectTrigger>
-                                                                <SelectContent>{store.products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}</SelectContent>
+                                                                <SelectContent>{productsList.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}</SelectContent>
                                                             </Select>
                                                         </TableCell>
                                                         <TableCell className="py-2"><Input type="number" min={1} value={item.quantity} onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, quantity: parseInt(e.target.value) || 1, selected_sns: [] } : x))} className="h-8" /></TableCell>

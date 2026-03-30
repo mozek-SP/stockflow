@@ -46,6 +46,8 @@ export default function TransfersPage() {
     const store = useMockStore()
     const [records, setRecords] = useState<any[]>(isSupabaseConfigured ? [] : store.transfers)
     const [loading, setLoading] = useState(isSupabaseConfigured)
+    const [productsList, setProductsList] = useState<any[]>(isSupabaseConfigured ? [] : store.products)
+    const [warehousesList, setWarehousesList] = useState<any[]>(isSupabaseConfigured ? [] : store.warehouses)
     const [dialogOpen, setDialogOpen] = useState(false)
     const [saving, setSaving] = useState(false)
     const [detailsOpen, setDetailsOpen] = useState(false)
@@ -56,15 +58,29 @@ export default function TransfersPage() {
     const { toast } = useToast()
     const supabase = createClient()
 
-    useEffect(() => { if (!isSupabaseConfigured) setRecords(store.transfers) }, [store.transfers])
+    useEffect(() => { 
+        if (!isSupabaseConfigured) {
+            setRecords(store.transfers)
+            setProductsList(store.products)
+            setWarehousesList(store.warehouses)
+        } 
+    }, [store.transfers, store.products, store.warehouses])
     useEffect(() => { if (isSupabaseConfigured) fetchData() }, [])
 
     async function fetchData() {
         setLoading(true)
-        const { data } = await supabase.from("stock_transfers")
-            .select("*, from_warehouse:warehouses!from_warehouse_id(name), to_warehouse:warehouses!to_warehouse_id(name), stock_transfer_items(quantity, serial_numbers, products(name, sku, requires_sn))")
-            .order("created_at", { ascending: false }).limit(50)
-        setRecords((data as any) || [])
+        const [
+            { data: trData },
+            { data: prodData },
+            { data: whData }
+        ] = await Promise.all([
+            supabase.from("stock_transfers").select("*, from_warehouse:warehouses!from_warehouse_id(name), to_warehouse:warehouses!to_warehouse_id(name), stock_transfer_items(quantity, serial_numbers, products(name, sku, requires_sn))").order("created_at", { ascending: false }).limit(50),
+            supabase.from("products").select("id, name, sku, requires_sn").order("name"),
+            supabase.from("warehouses").select("id, name").order("name")
+        ])
+        setRecords((trData as any) || [])
+        if (prodData) setProductsList(prodData)
+        if (whData) setWarehousesList(whData)
         setLoading(false)
     }
 
@@ -76,7 +92,7 @@ export default function TransfersPage() {
 
     async function loadAvailableSns(itemIndex: number, productId: string, warehouseId: string) {
         if (!productId) return
-        const product = store.products.find(p => p.id === productId)
+        const product = productsList.find(p => p.id === productId)
         if (!product?.requires_sn) return
 
         if (!isSupabaseConfigured) {
@@ -118,7 +134,7 @@ export default function TransfersPage() {
         if (validItems.length === 0) { toast({ title: t.addAtLeastOne, variant: "destructive" }); return }
 
         for (const item of validItems) {
-            const product = store.products.find(p => p.id === item.product_id)
+            const product = productsList.find(p => p.id === item.product_id)
             if (product?.requires_sn) {
                 if (item.selected_sns.length !== item.quantity) {
                     toast({ title: `${product.name}: ต้องเลือก S/N จำนวน ${item.quantity} รายการ (เลือกแล้ว ${item.selected_sns.length})`, variant: "destructive" })
@@ -137,13 +153,13 @@ export default function TransfersPage() {
                 from_warehouse_id: form.from_warehouse_id, to_warehouse_id: form.to_warehouse_id,
                 from_warehouse: { name: fromWH?.name || "?" }, to_warehouse: { name: toWH?.name || "?" },
                 stock_transfer_items: validItems.map((i) => {
-                    const p = store.products.find((p) => p.id === i.product_id);
+                    const p = productsList.find((p) => p.id === i.product_id);
                     return { quantity: i.quantity, serial_numbers: i.selected_sns, products: { name: p?.name || "?", sku: p?.sku || "?", requires_sn: p?.requires_sn || false } }
                 }),
             }
             store.setTransfers([newTransfer, ...store.transfers])
             for (const item of validItems) {
-                const prod = store.products.find((p) => p.id === item.product_id)
+                const prod = productsList.find((p) => p.id === item.product_id)
                 store.addMovement({ product_id: item.product_id, warehouse_id: form.from_warehouse_id, type: "TRANSFER_OUT", quantity: item.quantity, notes: form.notes ? `Transfer Out to ${toWH?.name} - ${form.notes}` : `Transfer Out to ${toWH?.name}`, products: prod ? { name: prod.name, sku: prod.sku } : null, warehouses: { name: fromWH?.name }, serial_numbers: item.selected_sns })
                 store.addMovement({ product_id: item.product_id, warehouse_id: form.to_warehouse_id, type: "TRANSFER_IN", quantity: item.quantity, notes: form.notes ? `Transfer In from ${fromWH?.name} - ${form.notes}` : `Transfer In from ${fromWH?.name}`, products: prod ? { name: prod.name, sku: prod.sku } : null, warehouses: { name: toWH?.name }, serial_numbers: item.selected_sns })
             }
@@ -220,14 +236,14 @@ export default function TransfersPage() {
                             <div className="space-y-1.5"><Label>{t.fromWarehouse} *</Label>
                                 <Select value={form.from_warehouse_id} onValueChange={onFromWarehouseChange}>
                                     <SelectTrigger><SelectValue placeholder={t.selectWarehouse} /></SelectTrigger>
-                                    <SelectContent>{store.warehouses.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
+                                    <SelectContent>{warehousesList.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
                                 </Select>
                             </div>
                             <div className="flex justify-center pb-1"><ArrowRight className="w-5 h-5 text-slate-400" /></div>
                             <div className="space-y-1.5"><Label>{t.toWarehouse} *</Label>
                                 <Select value={form.to_warehouse_id} onValueChange={(v) => setForm({ ...form, to_warehouse_id: v })}>
                                     <SelectTrigger><SelectValue placeholder={t.selectWarehouse} /></SelectTrigger>
-                                    <SelectContent>{store.warehouses.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
+                                    <SelectContent>{warehousesList.map((w) => <SelectItem key={w.id} value={w.id}>{w.name}</SelectItem>)}</SelectContent>
                                 </Select>
                             </div>
                         </div>
@@ -242,7 +258,7 @@ export default function TransfersPage() {
                                     <TableHeader><TableRow><TableHead>{t.product}</TableHead><TableHead className="w-32">{t.quantity}</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
                                     <TableBody>
                                         {items.map((item, i) => {
-                                            const product = store.products.find(p => p.id === item.product_id);
+                                            const product = productsList.find(p => p.id === item.product_id);
                                             const availSns = availableSnMap[i] || []
                                             return (
                                                 <React.Fragment key={i}>
@@ -250,7 +266,7 @@ export default function TransfersPage() {
                                                         <TableCell className="py-2">
                                                             <Select value={item.product_id} onValueChange={(v) => onProductChange(i, v)}>
                                                                 <SelectTrigger className="h-8"><SelectValue placeholder={t.selectProduct} /></SelectTrigger>
-                                                                <SelectContent>{store.products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}</SelectContent>
+                                                                <SelectContent>{productsList.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}</SelectContent>
                                                             </Select>
                                                         </TableCell>
                                                         <TableCell className="py-2"><Input type="number" min={1} value={item.quantity} onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, quantity: parseInt(e.target.value) || 1, selected_sns: [] } : x))} className="h-8" /></TableCell>
