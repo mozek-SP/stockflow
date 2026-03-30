@@ -328,16 +328,18 @@ export default function ReportsPage() {
             }
 
             const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" })
+            let canUseThai = false
 
-            // ── Load Thai Font (Sarabun) ──────────────────────────────────────
+            // ── Load Thai Font ──────────────────────────────────────────────
             try {
                 const fontUrl = "https://fonts.gstatic.com/s/sarabun/v13/dt8kJxotCwn_H881wV5i-C9E.ttf"
                 const fontRes = await fetch(fontUrl)
-                const fontBuf = await fontRes.arrayBuffer()
-                const fontB64 = btoa(new Uint8Array(fontBuf).reduce((d, b) => d + String.fromCharCode(b), ""))
-                doc.addFileToVFS("Sarabun.ttf", fontB64)
+                const fontBuffer = await fontRes.arrayBuffer()
+                const base64Font = btoa(new Uint8Array(fontBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ''))
+                doc.addFileToVFS("Sarabun.ttf", base64Font)
                 doc.addFont("Sarabun.ttf", "Sarabun", "normal")
                 doc.setFont("Sarabun")
+                canUseThai = true
             } catch (err) { console.error("PDF Font Error:", err) }
 
             // Header
@@ -345,6 +347,7 @@ export default function ReportsPage() {
             doc.setTextColor(109, 40, 217) // violet-700
             doc.text("StockFlow", 14, 16)
             doc.setFontSize(12); doc.setTextColor(15, 23, 42)
+            if (canUseThai) doc.setFont("Sarabun", "normal")
             doc.text(title, 14, 24)
             doc.setFontSize(9); doc.setTextColor(148, 163, 184)
             doc.text(`${isTH ? "วันที่พิมพ์" : "Printed"}: ${new Date().toLocaleString("th-TH")}`, 14, 31)
@@ -355,19 +358,20 @@ export default function ReportsPage() {
                 columns,
                 body: data,
                 theme: "grid",
-                styles: { font: "Sarabun", fontSize: 8 },
+                styles: { font: canUseThai ? "Sarabun" : "helvetica", fontSize: 8 },
                 headStyles: {
                     fillColor: [109, 40, 217],
                     textColor: 255,
-                    fontStyle: "bold",
+                    fontStyle: "normal", // IMPORTANT: Do not use bold if bold font is not loaded
                     fontSize: 8,
-                    font: "Sarabun",
+                    font: canUseThai ? "Sarabun" : "helvetica",
                 },
-                bodyStyles: { fontSize: 8, textColor: [15, 23, 42], font: "Sarabun" },
+                bodyStyles: { fontSize: 8, textColor: [15, 23, 42], font: canUseThai ? "Sarabun" : "helvetica" },
                 alternateRowStyles: { fillColor: [248, 250, 252] },
                 margin: { left: 14, right: 14 },
                 didDrawPage: (d) => {
                     doc.setFontSize(8); doc.setTextColor(148, 163, 184)
+                    if (canUseThai) doc.setFont("Sarabun", "normal")
                     const str = `${isTH ? "หน้า" : "Page"} ${d.pageNumber}`
                     const pageHeight = doc.internal.pageSize.height || doc.internal.pageSize.getHeight()
                     doc.text(str, 14, pageHeight - 10)
