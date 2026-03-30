@@ -57,6 +57,7 @@ export default function StockOutPage() {
     const [items, setItems] = useState<LineItem[]>([{ product_id: "", quantity: 1, selected_sns: [] }])
     // availableSnMap[i] = list of S/N available for item i
     const [availableSnMap, setAvailableSnMap] = useState<Record<number, string[]>>({})
+    const [warehouseInventory, setWarehouseInventory] = useState<any[]>([])
     const { toast } = useToast()
     const supabase = createClient()
 
@@ -90,6 +91,7 @@ export default function StockOutPage() {
         setForm({ warehouse_id: "", date: new Date().toISOString().split("T")[0], notes: "" })
         setItems([{ product_id: "", quantity: 1, selected_sns: [] }])
         setAvailableSnMap({})
+        setWarehouseInventory([])
     }
 
     async function loadAvailableSns(itemIndex: number, productId: string, warehouseId: string) {
@@ -117,7 +119,7 @@ export default function StockOutPage() {
         if (productId && form.warehouse_id) loadAvailableSns(i, productId, form.warehouse_id)
     }
 
-    function onWarehouseChange(warehouseId: string) {
+    async function onWarehouseChange(warehouseId: string) {
         setForm({ ...form, warehouse_id: warehouseId })
         // Reload S/N for all items that have a product selected
         items.forEach((item, i) => {
@@ -125,6 +127,19 @@ export default function StockOutPage() {
         })
         // Clear selected SNs since warehouse changed
         setItems(items.map(x => ({ ...x, selected_sns: [] })))
+
+        if (!warehouseId) {
+            setWarehouseInventory([])
+            return
+        }
+
+        if (!isSupabaseConfigured) {
+            const inv = store.products.map(p => ({ product_id: p.id, quantity: store.getInventoryQty(p.id, warehouseId) })).filter(i => i.quantity > 0)
+            setWarehouseInventory(inv)
+        } else {
+            const { data } = await supabase.from("inventory").select("product_id, quantity").eq("warehouse_id", warehouseId).gt("quantity", 0)
+            setWarehouseInventory((data as any) || [])
+        }
     }
 
     function toggleSn(itemIndex: number, sn: string) {
@@ -260,7 +275,13 @@ export default function StockOutPage() {
                                                         <TableCell className="py-2">
                                                             <Select value={item.product_id} onValueChange={(v) => onProductChange(i, v)}>
                                                                 <SelectTrigger className="h-8"><SelectValue placeholder={t.selectProduct} /></SelectTrigger>
-                                                                <SelectContent>{productsList.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku})</SelectItem>)}</SelectContent>
+                                                                <SelectContent>
+                                                                    {productsList.filter(p => warehouseInventory.some(inv => inv.product_id === p.id)).map((p) => {
+                                                                        const inv = warehouseInventory.find(inv => inv.product_id === p.id)
+                                                                        return <SelectItem key={p.id} value={p.id}>{p.name} ({p.sku}) [มี {inv?.quantity}]</SelectItem>
+                                                                    })}
+                                                                    {warehouseInventory.length === 0 && <div className="p-2 text-sm text-slate-500 text-center">กรุณาเลือกคลังที่มีสินค้า</div>}
+                                                                </SelectContent>
                                                             </Select>
                                                         </TableCell>
                                                         <TableCell className="py-2"><Input type="number" min={1} value={item.quantity} onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, quantity: parseInt(e.target.value) || 1, selected_sns: [] } : x))} className="h-8" /></TableCell>
