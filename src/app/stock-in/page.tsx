@@ -244,7 +244,7 @@ export default function StockInPage() {
             </div>
 
             <Dialog open={dialogOpen} onOpenChange={(o) => { if (!o) resetForm(); setDialogOpen(o); }}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="max-w-5xl max-h-[95vh] overflow-y-auto">
                     <DialogHeader><DialogTitle className="flex items-center gap-2"><PackagePlus className="w-5 h-5 text-emerald-600" />{editingId ? (t as any).editProduct || "แก้ไขรายการ" : t.newStockIn}</DialogTitle></DialogHeader>
                     <div className="space-y-4">
                         <div className="grid grid-cols-3 gap-3">
@@ -346,7 +346,7 @@ export default function StockInPage() {
             </Dialog>
 
             <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-                <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
                     <DialogHeader>
                         <DialogTitle className="flex items-center gap-2 text-emerald-600">
                             <ClipboardList className="w-5 h-5" />

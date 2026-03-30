@@ -295,7 +295,7 @@ export default function StockOutPage() {
             </div>
 
             <Dialog open={dialogOpen} onOpenChange={(o) => { if (!o) resetForm(); setDialogOpen(o) }}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="max-w-5xl max-h-[95vh] overflow-y-auto">
                     <DialogHeader><DialogTitle className="flex items-center gap-2"><PackageMinus className="w-5 h-5 text-red-500" />{editingId ? (t as any).editProduct || "แก้ไขรายการ" : t.newStockOut}</DialogTitle></DialogHeader>
                     <div className="space-y-4">
                         <div className="grid grid-cols-2 gap-3">

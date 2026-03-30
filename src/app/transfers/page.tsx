@@ -301,7 +301,7 @@ export default function TransfersPage() {
             </div>
 
             <Dialog open={dialogOpen} onOpenChange={(o) => { if (!o) resetForm(); setDialogOpen(o) }}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="max-w-5xl max-h-[95vh] overflow-y-auto">
                     <DialogHeader><DialogTitle className="flex items-center gap-2"><GitMerge className="w-5 h-5 text-violet-600" />{editingId ? (t as any).editProduct || "แก้ไขรายการ" : t.newTransfer}</DialogTitle></DialogHeader>
                     <div className="space-y-4">
                         <div className="grid grid-cols-3 gap-3 items-end">
