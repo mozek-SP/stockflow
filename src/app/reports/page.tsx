@@ -329,15 +329,24 @@ export default function ReportsPage() {
 
             const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" })
 
+            // ── Load Thai Font (Sarabun) ──────────────────────────────────────
+            try {
+                const fontUrl = "https://fonts.gstatic.com/s/sarabun/v13/dt8kJxotCwn_H881wV5i-C9E.ttf"
+                const fontRes = await fetch(fontUrl)
+                const fontBuf = await fontRes.arrayBuffer()
+                const fontB64 = btoa(new Uint8Array(fontBuf).reduce((d, b) => d + String.fromCharCode(b), ""))
+                doc.addFileToVFS("Sarabun.ttf", fontB64)
+                doc.addFont("Sarabun.ttf", "Sarabun", "normal")
+                doc.setFont("Sarabun")
+            } catch (err) { console.error("PDF Font Error:", err) }
+
             // Header
             doc.setFontSize(16)
             doc.setTextColor(109, 40, 217) // violet-700
             doc.text("StockFlow", 14, 16)
-            doc.setFontSize(12)
-            doc.setTextColor(15, 23, 42)
+            doc.setFontSize(12); doc.setTextColor(15, 23, 42)
             doc.text(title, 14, 24)
-            doc.setFontSize(9)
-            doc.setTextColor(148, 163, 184)
+            doc.setFontSize(9); doc.setTextColor(148, 163, 184)
             doc.text(`${isTH ? "วันที่พิมพ์" : "Printed"}: ${new Date().toLocaleString("th-TH")}`, 14, 31)
             doc.text(`${isTH ? "รายการทั้งหมด" : "Total records"}: ${data.length}`, 14, 37)
 
@@ -346,16 +355,23 @@ export default function ReportsPage() {
                 columns,
                 body: data,
                 theme: "grid",
+                styles: { font: "Sarabun", fontSize: 8 },
                 headStyles: {
                     fillColor: [109, 40, 217],
                     textColor: 255,
                     fontStyle: "bold",
                     fontSize: 8,
+                    font: "Sarabun",
                 },
-                bodyStyles: { fontSize: 8, textColor: [15, 23, 42] },
+                bodyStyles: { fontSize: 8, textColor: [15, 23, 42], font: "Sarabun" },
                 alternateRowStyles: { fillColor: [248, 250, 252] },
-                columnStyles: { 0: { cellWidth: "auto" } },
                 margin: { left: 14, right: 14 },
+                didDrawPage: (d) => {
+                    doc.setFontSize(8); doc.setTextColor(148, 163, 184)
+                    const str = `${isTH ? "หน้า" : "Page"} ${d.pageNumber}`
+                    const pageHeight = doc.internal.pageSize.height || doc.internal.pageSize.getHeight()
+                    doc.text(str, 14, pageHeight - 10)
+                }
             })
 
             const filename = `StockFlow_${title}_${todayStr()}.pdf`
