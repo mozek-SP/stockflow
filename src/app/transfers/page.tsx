@@ -326,17 +326,17 @@ export default function TransfersPage() {
                         <div className="space-y-2">
                             <div className="flex items-center justify-between"><Label>{t.products}</Label><Button size="sm" variant="outline" onClick={() => { setItems([...items, { product_id: "", quantity: 1, selected_sns: [] }]); setItemSearch([...itemSearch, ""]) }} className="gap-1 h-7 text-xs"><Plus className="w-3 h-3" />{t.addRow}</Button></div>
                             <div className="rounded-xl border border-slate-200">
-                                <Table>
-                                    <TableHeader><TableRow><TableHead>{t.product}</TableHead><TableHead className="w-32">{t.quantity}</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
-                                    <TableBody>
+                                <Table className="!overflow-visible">
+                                    <TableHeader className="!overflow-visible"><TableRow className="!overflow-visible"><TableHead>{t.product}</TableHead><TableHead className="w-32">{t.quantity}</TableHead><TableHead className="w-10" /></TableRow></TableHeader>
+                                    <TableBody className="!overflow-visible">
                                         {items.map((item, i) => {
                                             const product = productsList.find(p => p.id === item.product_id);
                                             const availSns = availableSnMap[i] || []
                                             return (
                                                 <React.Fragment key={i}>
-                                                    <TableRow>
-                                                        <TableCell className="py-2">
-                                                            <div className="relative group">
+                                                    <TableRow className="!overflow-visible relative focus-within:z-50">
+                                                        <TableCell className="py-2 !overflow-visible">
+                                                            <div className="relative group z-50">
                                                                 <Input 
                                                                     placeholder={t.selectProduct} 
                                                                     className="h-8 pr-8"
