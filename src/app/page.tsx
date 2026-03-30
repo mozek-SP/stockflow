@@ -52,8 +52,8 @@ export default function DashboardPage() {
 
     const [stats, setStats] = useState<DashboardStats>(mockStats)
     const [recentMovements, setRecentMovements] = useState<RecentMovement[]>(store.movements.slice(0, 8) as any)
-    const [chartData, setChartData] = useState<any[]>(mockChartData)
-    const [topProducts, setTopProducts] = useState<any[]>(mockTopProducts)
+    const [chartData, setChartData] = useState<any[]>(isSupabaseConfigured ? [] : mockChartData)
+    const [topProducts, setTopProducts] = useState<any[]>(isSupabaseConfigured ? [] : mockTopProducts)
     const [loading, setLoading] = useState(isSupabaseConfigured)
     const supabase = createClient()
 
@@ -116,7 +116,7 @@ export default function DashboardPage() {
                 }
             })
             const builtChart = Object.values(days)
-            setChartData(builtChart.some(d => d.IN > 0 || d.OUT > 0) ? builtChart : mockChartData)
+            setChartData(builtChart)
 
             // ── Top Products: by OUT quantity from real movements ──────────────
             const { data: outMoves } = await supabase
@@ -135,7 +135,7 @@ export default function DashboardPage() {
             const top5 = Object.values(productTotals)
                 .sort((a, b) => b.total_qty - a.total_qty)
                 .slice(0, 5)
-            setTopProducts(top5.length > 0 ? top5 : mockTopProducts)
+            setTopProducts(top5)
 
         } catch (e) { console.error(e) }
         setLoading(false)
