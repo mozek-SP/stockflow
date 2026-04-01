@@ -77,7 +77,7 @@ export default function TransfersPage() {
             { data: prodData },
             { data: whData }
         ] = await Promise.all([
-            supabase.from("stock_transfers").select("*, from_warehouse:warehouses!from_warehouse_id(name), to_warehouse:warehouses!to_warehouse_id(name), stock_transfer_items(quantity, serial_numbers, products(name, sku, requires_sn))").order("created_at", { ascending: false }).limit(50),
+            supabase.from("stock_transfers").select("*, from_warehouse:warehouses!from_warehouse_id(name), to_warehouse:warehouses!to_warehouse_id(name), stock_transfer_items(product_id, quantity, serial_numbers, products(name, sku, requires_sn))").order("created_at", { ascending: false }).limit(50),
             supabase.from("products").select("id, name, sku, requires_sn").order("sku"),
             supabase.from("warehouses").select("id, name").order("name")
         ])
@@ -110,7 +110,7 @@ export default function TransfersPage() {
             selected_sns: i.serial_numbers || []
         }))
         setItems(mappedItems)
-        setItemSearch(mappedItems.map(() => ""))
+        setItemSearch(mappedItems.map((i: any) => productsList.find(p => p.id === i.product_id)?.name || ""))
         await onFromWarehouseChange(r.from_warehouse_id, mappedItems)
         setDialogOpen(true)
     }

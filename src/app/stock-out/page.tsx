@@ -78,7 +78,7 @@ export default function StockOutPage() {
             { data: prodData },
             { data: whData }
         ] = await Promise.all([
-            supabase.from("stock_out").select("*, warehouses(name), stock_out_items(quantity, serial_numbers, products(name, sku, requires_sn))").order("created_at", { ascending: false }).limit(50),
+            supabase.from("stock_out").select("*, warehouses(name), stock_out_items(product_id, quantity, serial_numbers, products(name, sku, requires_sn))").order("created_at", { ascending: false }).limit(50),
             supabase.from("products").select("id, name, sku, requires_sn").order("sku"),
             supabase.from("warehouses").select("id, name").order("name")
         ])
@@ -110,7 +110,7 @@ export default function StockOutPage() {
             selected_sns: i.serial_numbers || []
         }))
         setItems(mappedItems)
-        setItemSearch(mappedItems.map(() => ""))
+        setItemSearch(mappedItems.map((i: any) => productsList.find(p => p.id === i.product_id)?.name || ""))
         await onWarehouseChange(r.warehouse_id, mappedItems)
         setDialogOpen(true)
     }

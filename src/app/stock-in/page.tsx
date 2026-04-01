@@ -17,7 +17,6 @@ import { useMockStore } from "@/lib/mock-store"
 import { useAuth } from "@/contexts/AuthContext"
 import { formatDate, formatNumber } from "@/lib/utils"
 import { Plus, PackagePlus, X, Barcode, ClipboardList, Eye, Search, Edit2, Trash2 } from "lucide-react"
-// Note: Manual searchable select used instead of Popover/Command components
 
 interface LineItem { product_id: string; quantity: number; serial_numbers?: string }
 
@@ -37,11 +36,10 @@ export default function StockInPage() {
     const [editingId, setEditingId] = useState<string | null>(null)
     const [form, setForm] = useState({ supplier_id: "", warehouse_id: "", date: new Date().toISOString().split("T")[0], notes: "" })
     const [items, setItems] = useState<LineItem[]>([{ product_id: "", quantity: 1, serial_numbers: "" }])
-    const [itemSearch, setItemSearch] = useState<string[]>([]) // Track search text for each row
+    const [itemSearch, setItemSearch] = useState<string[]>([])
     const { toast } = useToast()
     const supabase = createClient()
 
-    // Live sync from store in mock mode
     useEffect(() => { 
         if (!isSupabaseConfigured) {
             setRecords(store.stockIns)
@@ -60,7 +58,7 @@ export default function StockInPage() {
             { data: supData },
             { data: whData }
         ] = await Promise.all([
-            supabase.from("stock_in").select("*, suppliers(name), warehouses(name), stock_in_items(quantity, serial_numbers, products(name, sku, requires_sn))").order("created_at", { ascending: false }).limit(50),
+            supabase.from("stock_in").select("*, suppliers(name), warehouses(name), stock_in_items(product_id, quantity, serial_numbers, products(name, sku, requires_sn))").order("created_at", { ascending: false }).limit(50),
             supabase.from("products").select("id, name, sku, requires_sn").order("sku"),
             supabase.from("suppliers").select("id, name").order("name"),
             supabase.from("warehouses").select("id, name").order("name")
@@ -93,7 +91,7 @@ export default function StockInPage() {
             serial_numbers: (i.serial_numbers || []).join(",")
         }))
         setItems(mappedItems)
-        setItemSearch(mappedItems.map(() => ""))
+        setItemSearch(mappedItems.map((i: any) => productsList.find(p => p.id === i.product_id)?.name || ""))
         setDialogOpen(true)
     }
 
@@ -107,7 +105,7 @@ export default function StockInPage() {
             if (product?.requires_sn) {
                 const sns = (item.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s)
                 if (sns.length !== item.quantity) {
-                    toast({ title: (t as any).serialNumbers ? `${product.name} needs exactly ${item.quantity} S/N (found ${sns.length})` : "S/N mismatch", variant: "destructive" })
+                    toast({ title: `${product.name} needs exactly ${item.quantity} S/N (found ${sns.length})`, variant: "destructive" })
                     return
                 }
             }
@@ -125,7 +123,7 @@ export default function StockInPage() {
                 stock_in_items: validItems.map((i) => {
                     const p = productsList.find((p) => p.id === i.product_id);
                     const sns = p?.requires_sn ? (i.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s) : [];
-                    return { quantity: i.quantity, serial_numbers: sns, products: { name: p?.name || "?", sku: p?.sku || "?", requires_sn: p?.requires_sn || false } }
+                    return { product_id: i.product_id, quantity: i.quantity, serial_numbers: sns, products: { name: p?.name || "?", sku: p?.sku || "?", requires_sn: p?.requires_sn || false } }
                 }),
             }
             store.setStockIns([newRecord, ...store.stockIns])
@@ -149,32 +147,23 @@ export default function StockInPage() {
             let stockInId = editingId
             
             if (editingId) {
-                // Handle Update Logic
-                // 1. Revert Inventory
                 const { data: oldItems } = await supabase.from("stock_in_items").select("*").eq("stock_in_id", editingId)
                 const oldRecord = records.find(r => r.id === editingId)
                 if (oldItems && oldRecord) {
                     for (const oi of (oldItems as any[])) {
                         const { data: ex } = await supabase.from("inventory").select("id, quantity").eq("product_id", oi.product_id).eq("warehouse_id", oldRecord.warehouse_id).single()
-                        if (ex) await (supabase.from("inventory") as any).update({ quantity: (ex as any).quantity - oi.quantity } as any).eq("id", (ex as any).id)
+                        if (ex) await (supabase.from("inventory") as any).update({ quantity: Math.max(0, (ex as any).quantity - oi.quantity) } as any).eq("id", (ex as any).id)
                     }
                 }
-                
-                // 2. Clear old movements and items
                 await supabase.from("stock_movements").delete().eq("reference_id", editingId)
                 await supabase.from("stock_in_items").delete().eq("stock_in_id", editingId)
-                
-                // 3. Update Header
-                const { error: hErr } = await (supabase.from("stock_in") as any).update({ supplier_id: form.supplier_id || null, warehouse_id: form.warehouse_id, date: form.date, notes: form.notes || null } as any).eq("id", editingId)
-                if (hErr) throw hErr
+                await (supabase.from("stock_in") as any).update({ supplier_id: form.supplier_id || null, warehouse_id: form.warehouse_id, date: form.date, notes: form.notes || null } as any).eq("id", editingId)
             } else {
-                // Insert New
                 const { data: stockIn, error: hErr } = await (supabase.from("stock_in") as any).insert({ supplier_id: form.supplier_id || null, warehouse_id: form.warehouse_id, date: form.date, notes: form.notes || null, created_by: "admin" } as any).select().single()
                 if (hErr) throw hErr
                 stockInId = (stockIn as any).id
             }
 
-            // Common Insert Logic for items/movements/inventory
             await (supabase.from("stock_in_items") as any).insert(validItems.map((i) => {
                 const product = productsList.find(p => p.id === i.product_id);
                 const sns = product?.requires_sn ? (i.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s) : [];
@@ -184,17 +173,13 @@ export default function StockInPage() {
             for (const item of validItems) {
                 const product = productsList.find(p => p.id === item.product_id);
                 const sns = product?.requires_sn ? (item.serial_numbers || "").split(",").map(s => s.trim()).filter(s => s) : [];
-                
-                // Add Movement
                 await (supabase.from("stock_movements") as any).insert({ product_id: item.product_id, warehouse_id: form.warehouse_id, type: "IN", quantity: item.quantity, reference_id: stockInId, notes: form.notes ? `Stock In #${stockInId!.slice(0, 8)} - ${form.notes}` : `Stock In #${stockInId!.slice(0, 8)}`, serial_numbers: sns } as any)
-                
-                // Update Inventory
                 const { data: ex } = await supabase.from("inventory").select("id, quantity").eq("product_id", item.product_id).eq("warehouse_id", form.warehouse_id).single()
                 if (ex) await (supabase.from("inventory") as any).update({ quantity: (ex as any).quantity + item.quantity } as any).eq("id", (ex as any).id)
                 else await (supabase.from("inventory") as any).insert({ product_id: item.product_id, warehouse_id: form.warehouse_id, quantity: item.quantity } as any)
             }
 
-            toast({ title: editingId ? (t as any).stockInUpdated || "อัปเดตเรียบร้อย" : t.stockInRecorded }); setDialogOpen(false); resetForm(); fetchData()
+            toast({ title: editingId ? "อัปเดตรายการเรียบร้อย" : t.stockInRecorded }); setDialogOpen(false); resetForm(); fetchData()
         } catch (err: any) { toast({ title: "Error", description: err.message, variant: "destructive" }) }
         setSaving(false)
     }
@@ -245,7 +230,7 @@ export default function StockInPage() {
 
             <Dialog open={dialogOpen} onOpenChange={(o) => { if (!o) resetForm(); setDialogOpen(o); }}>
                 <DialogContent className="max-w-none w-screen h-screen m-0 rounded-none overflow-y-auto">
-                    <DialogHeader><DialogTitle className="flex items-center gap-2"><PackagePlus className="w-5 h-5 text-emerald-600" />{editingId ? (t as any).editProduct || "แก้ไขรายการ" : t.newStockIn}</DialogTitle></DialogHeader>
+                    <DialogHeader><DialogTitle className="flex items-center gap-2"><PackagePlus className="w-5 h-5 text-emerald-600" />{editingId ? "แก้ไขรายการรับสินค้า" : t.newStockIn}</DialogTitle></DialogHeader>
                     <div className="space-y-4">
                         <div className="grid grid-cols-3 gap-3">
                             <div className="space-y-1.5"><Label>{t.date} *</Label><Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></div>
@@ -295,7 +280,7 @@ export default function StockInPage() {
                                                                             onMouseDown={() => {
                                                                                 setItems(items.map((x, idx) => idx === i ? { ...x, product_id: p.id } : x))
                                                                                 const newSearch = [...itemSearch]
-                                                                                newSearch[i] = "" // clear search on select
+                                                                                newSearch[i] = ""
                                                                                 setItemSearch(newSearch)
                                                                             }}
                                                                         >
