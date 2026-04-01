@@ -412,23 +412,62 @@ export default function TransfersPage() {
                                                                         {!form.from_warehouse_id ? "กรุณาเลือกคลังต้นทางก่อน" : "ไม่พบ S/N ในคลังต้นทาง"}
                                                                     </p>
                                                                 ) : (
-                                                                    <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
-                                                                        {availSns.map(sn => {
-                                                                            const selected = item.selected_sns.includes(sn)
-                                                                            const disabled = !selected && item.selected_sns.length >= item.quantity
-                                                                            return (
-                                                                                <button
-                                                                                    key={sn}
-                                                                                    type="button"
-                                                                                    disabled={disabled}
-                                                                                    onClick={() => toggleSn(i, sn)}
-                                                                                    className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-mono transition-all ${selected ? "bg-violet-600 text-white border-violet-600 shadow-sm" : disabled ? "bg-slate-100 text-slate-300 border-slate-200 cursor-not-allowed" : "bg-white text-slate-700 border-slate-200 hover:border-violet-400 hover:bg-violet-50 cursor-pointer"}`}
-                                                                                >
-                                                                                    {selected ? <CheckSquare className="w-3 h-3" /> : <Square className="w-3 h-3" />}
-                                                                                    {sn}
-                                                                                </button>
-                                                                            )
-                                                                        })}
+                                                                    <div className="space-y-3">
+                                                                        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 max-h-48 overflow-y-auto p-1 custom-scrollbar">
+                                                                            {Array.from({ length: item.quantity }).map((_, snIdx) => (
+                                                                                <div key={snIdx} className="relative group">
+                                                                                    <Input 
+                                                                                        placeholder={`S/N #${snIdx + 1}`}
+                                                                                        className={`text-[10px] h-8 font-mono pl-6 transition-all ${item.selected_sns[snIdx] ? "bg-violet-50 border-violet-300 text-violet-700 font-bold" : "bg-white border-slate-200 focus:border-violet-400 focus:ring-violet-500/10"}`}
+                                                                                        value={item.selected_sns[snIdx] || ""}
+                                                                                        onChange={(e) => {
+                                                                                            const val = e.target.value.trim()
+                                                                                            const newSelected = [...item.selected_sns]
+                                                                                            if (availSns.includes(val) && (!newSelected.includes(val) || newSelected[snIdx] === val)) {
+                                                                                                newSelected[snIdx] = val
+                                                                                                setItems(prev => prev.map((x, idx) => idx === i ? { ...x, selected_sns: newSelected } : x))
+                                                                                            } else {
+                                                                                                newSelected[snIdx] = val
+                                                                                                setItems(prev => prev.map((x, idx) => idx === i ? { ...x, selected_sns: newSelected } : x))
+                                                                                            }
+                                                                                        }}
+                                                                                    />
+                                                                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] text-slate-300 font-bold group-focus-within:text-violet-400">{snIdx + 1}</span>
+                                                                                    {item.selected_sns[snIdx] && !availSns.includes(item.selected_sns[snIdx]) && (
+                                                                                        <div className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full border border-white" title="S/N invalid or not in stock" />
+                                                                                    )}
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                        <div className="flex flex-col gap-2 pt-2 border-t border-violet-100">
+                                                                            <span className="text-[10px] font-bold text-slate-400 uppercase">Available S/N in source:</span>
+                                                                            <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                                                                                {availSns.map(sn => {
+                                                                                    const selectedInAnySlot = item.selected_sns.includes(sn)
+                                                                                    return (
+                                                                                        <button
+                                                                                            key={sn}
+                                                                                            type="button"
+                                                                                            onClick={() => {
+                                                                                                if (selectedInAnySlot) {
+                                                                                                    const newSelected = item.selected_sns.filter(s => s !== sn)
+                                                                                                    setItems(prev => prev.map((x, idx) => idx === i ? { ...x, selected_sns: newSelected } : x))
+                                                                                                } else {
+                                                                                                    const newSelected = [...item.selected_sns]
+                                                                                                    const firstEmpty = newSelected.findIndex(s => !s)
+                                                                                                    if (firstEmpty !== -1) newSelected[firstEmpty] = sn
+                                                                                                    else newSelected.push(sn)
+                                                                                                    setItems(prev => prev.map((x, idx) => idx === i ? { ...x, selected_sns: newSelected.slice(0, item.quantity) } : x))
+                                                                                                }
+                                                                                            }}
+                                                                                            className={`px-2 py-0.5 rounded text-[10px] font-mono border transition-all ${selectedInAnySlot ? "bg-violet-600 text-white border-violet-600" : "bg-white text-slate-600 border-slate-200 hover:border-violet-400 hover:bg-violet-50"}`}
+                                                                                        >
+                                                                                            {sn}
+                                                                                        </button>
+                                                                                    )
+                                                                                })}
+                                                                            </div>
+                                                                        </div>
                                                                     </div>
                                                                 )}
                                                             </TableCell>

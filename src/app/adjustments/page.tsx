@@ -327,10 +327,29 @@ export default function AdjustmentsPage() {
                                 </Label>
                                 {difference > 0 ? (
                                     // Adding stock → type new S/N
-                                    <>
-                                        <Input placeholder="ระบุ S/N คั่นด้วยคอมม่า..." value={form.serial_numbers || ""} onChange={(e) => setForm({ ...form, serial_numbers: e.target.value })} className="text-sm" />
-                                        <div className="text-[10px] text-slate-500 mt-1 pl-1">พบ {(form.serial_numbers || "").split(",").filter(s => s.trim()).length} จาก {difference} รายการ</div>
-                                    </>
+                                    <div className="space-y-3">
+                                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto p-1 custom-scrollbar">
+                                            {Array.from({ length: difference }).map((_, snIdx) => (
+                                                <div key={snIdx} className="relative group">
+                                                    <Input 
+                                                        placeholder={`S/N #${snIdx + 1}`}
+                                                        className="text-[10px] h-8 font-mono bg-white border-slate-200 focus:border-emerald-400 focus:ring-emerald-500/10 transition-all pl-6"
+                                                        value={(form.serial_numbers || "").split(",")[snIdx] || ""}
+                                                        onChange={(e) => {
+                                                            const currentSns = (form.serial_numbers || "").split(",")
+                                                            const newSns = Array.from({ length: difference }, (_, j) => currentSns[j] || "")
+                                                            newSns[snIdx] = e.target.value.trim()
+                                                            setForm({ ...form, serial_numbers: newSns.join(",") })
+                                                        }}
+                                                    />
+                                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] text-slate-300 font-bold group-focus-within:text-emerald-400">{snIdx + 1}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className={`text-[10px] pl-1 font-semibold ${(form.serial_numbers || "").split(",").filter(s => s.trim()).length === difference ? "text-emerald-600" : "text-amber-600"}`}>
+                                            ระบุแล้ว {(form.serial_numbers || "").split(",").filter(s => s.trim()).length}/{difference} รายการ
+                                        </div>
+                                    </div>
                                 ) : (
                                     // Removing stock → pick from existing S/N
                                     availableSns.length === 0 ? (

@@ -327,9 +327,35 @@ export default function StockInPage() {
                                                     </TableRow>
                                                     {product?.requires_sn && (
                                                         <TableRow>
-                                                            <TableCell colSpan={3} className="py-2 bg-slate-50 border-b border-slate-100">
-                                                                <Input placeholder="Enter S/N separated by commas..." value={item.serial_numbers || ""} onChange={(e) => setItems(items.map((x, idx) => idx === i ? { ...x, serial_numbers: e.target.value } : x))} className="text-xs h-8" />
-                                                                <div className="text-[10px] text-slate-500 mt-1 pl-1">Found {(item.serial_numbers || "").split(",").filter(s => s.trim()).length} of {item.quantity} required S/Ns</div>
+                                                            <TableCell colSpan={3} className="py-3 bg-violet-50/30 border-b border-violet-100/50">
+                                                                <div className="flex items-center gap-1.5 mb-2 px-1">
+                                                                    <Barcode className="w-3.5 h-3.5 text-violet-600" />
+                                                                    <span className="text-[11px] font-bold text-violet-800">ระบุ S/N ({item.quantity} รายการ)</span>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2 max-h-48 overflow-y-auto p-1 custom-scrollbar">
+                                                                    {Array.from({ length: item.quantity }).map((_, snIdx) => (
+                                                                        <div key={snIdx} className="relative group">
+                                                                            <Input 
+                                                                                placeholder={`S/N #${snIdx + 1}`}
+                                                                                className="text-[10px] h-8 font-mono bg-white border-slate-200 focus:border-violet-400 focus:ring-violet-500/10 transition-all pl-6"
+                                                                                value={(item.serial_numbers || "").split(",")[snIdx] || ""}
+                                                                                onChange={(e) => {
+                                                                                    const currentSns = (item.serial_numbers || "").split(",")
+                                                                                    const newSns = Array.from({ length: item.quantity }, (_, j) => currentSns[j] || "")
+                                                                                    newSns[snIdx] = e.target.value.trim()
+                                                                                    setItems(items.map((x, idx) => idx === i ? { ...x, serial_numbers: newSns.join(",") } : x))
+                                                                                }}
+                                                                            />
+                                                                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] text-slate-300 font-bold group-focus-within:text-violet-400">{snIdx + 1}</span>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                                <div className="text-[10px] text-slate-500 mt-2 pl-1 border-t pt-2 border-violet-100 flex justify-between items-center">
+                                                                    <span className="opacity-70">กรุณาระบุเลข Serial Number ให้ครบทุกช่อง</span>
+                                                                    <Badge variant="outline" className={`text-[10px] px-2 py-0.5 font-bold ${(item.serial_numbers || "").split(",").filter(s => s.trim()).length === item.quantity ? "bg-emerald-50 text-emerald-600 border-emerald-200" : "bg-amber-50 text-amber-600 border-amber-200"}`}>
+                                                                        {(item.serial_numbers || "").split(",").filter(s => s.trim()).length} / {item.quantity}
+                                                                    </Badge>
+                                                                </div>
                                                             </TableCell>
                                                         </TableRow>
                                                     )}
