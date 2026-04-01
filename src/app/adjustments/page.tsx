@@ -271,23 +271,26 @@ export default function AdjustmentsPage() {
                             <div className="relative group">
                                 <Input 
                                     placeholder={t.selectProduct} 
-                                    className="h-9 pr-8"
+                                    className="h-9 pr-8 transition-all focus:ring-2 focus:ring-violet-500/20"
                                     value={itemSearch}
                                     onChange={(e) => setItemSearch(e.target.value)}
                                 />
-                                <div className="absolute top-full left-0 w-full z-50 bg-white border border-slate-200 rounded-lg shadow-xl hidden group-focus-within:block max-h-48 overflow-y-auto">
+                                <div className="absolute top-full left-0 w-full min-w-[320px] mt-1 z-[110] bg-white border border-slate-300 rounded-lg shadow-2xl hidden group-focus-within:block max-h-64 overflow-y-auto overflow-x-hidden transition-all">
                                     {productsList.filter(p => !itemSearch || p.name.toLowerCase().includes(itemSearch.toLowerCase()) || p.sku.toLowerCase().includes(itemSearch.toLowerCase())).map(p => (
                                         <div 
                                             key={p.id} 
-                                            className="px-3 py-2 text-sm hover:bg-violet-50 cursor-pointer flex justify-between border-b border-slate-50 last:border-0"
+                                            className="px-4 py-2.5 hover:bg-violet-50 cursor-pointer flex flex-col gap-0.5 border-b border-slate-50 last:border-0 transition-colors"
                                             onMouseDown={() => {
                                                 setForm({ ...form, product_id: p.id }); 
                                                 onProductWarehouseChange(p.id, form.warehouse_id)
                                                 setItemSearch(p.name)
                                             }}
                                         >
-                                            <span className="font-medium">{p.name}</span>
-                                            <code className="text-xs text-slate-400">{p.sku}</code>
+                                            <span className="font-semibold text-slate-800 text-xs">{p.name}</span>
+                                            <div className="flex items-center gap-2">
+                                                <code className="text-[10px] text-slate-400 bg-slate-100 px-1 rounded">{p.sku}</code>
+                                                {p.requires_sn && <span className="text-[9px] text-violet-500 font-medium">Requires S/N</span>}
+                                            </div>
                                         </div>
                                     ))}
                                 </div>

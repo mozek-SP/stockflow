@@ -273,12 +273,12 @@ export default function StockInPage() {
                                             const product = productsList.find(p => p.id === item.product_id);
                                             return (
                                                 <React.Fragment key={i}>
-                                                    <TableRow className="!overflow-visible relative focus-within:z-50">
+                                                    <TableRow className="!overflow-visible relative focus-within:z-[100] z-0">
                                                         <TableCell className="py-2 !overflow-visible">
-                                                            <div className="relative group z-50">
+                                                            <div className="relative group">
                                                                 <Input 
                                                                     placeholder={t.selectProduct} 
-                                                                    className="h-8 pr-8"
+                                                                    className="h-8 pr-8 focus:ring-2 focus:ring-violet-500/20"
                                                                     value={itemSearch[i] || (productsList.find(p => p.id === item.product_id)?.name || "")}
                                                                     onChange={(e) => {
                                                                         const val = e.target.value
@@ -287,11 +287,11 @@ export default function StockInPage() {
                                                                         setItemSearch(newSearch)
                                                                     }}
                                                                 />
-                                                                <div className="absolute top-full left-0 w-full z-50 bg-white border border-slate-200 rounded-lg shadow-xl hidden group-focus-within:block max-h-48 overflow-y-auto">
+                                                                <div className="absolute top-full left-0 w-full min-w-[300px] mt-1 z-[110] bg-white border border-slate-300 rounded-lg shadow-2xl hidden group-focus-within:block max-h-60 overflow-y-auto overflow-x-hidden">
                                                                     {productsList.filter(p => !itemSearch[i] || p.name.toLowerCase().includes(itemSearch[i].toLowerCase()) || p.sku.toLowerCase().includes(itemSearch[i].toLowerCase())).map(p => (
                                                                         <div 
                                                                             key={p.id} 
-                                                                            className="px-3 py-1.5 text-xs hover:bg-violet-50 cursor-pointer flex justify-between border-b border-slate-50 last:border-0"
+                                                                            className="px-4 py-2.5 hover:bg-violet-50 cursor-pointer flex flex-col gap-0.5 border-b border-slate-50 last:border-0 transition-colors"
                                                                             onMouseDown={() => {
                                                                                 setItems(items.map((x, idx) => idx === i ? { ...x, product_id: p.id } : x))
                                                                                 const newSearch = [...itemSearch]
@@ -299,12 +299,15 @@ export default function StockInPage() {
                                                                                 setItemSearch(newSearch)
                                                                             }}
                                                                         >
-                                                                            <span className="font-medium">{p.name}</span>
-                                                                            <code className="text-[10px] text-slate-400">{p.sku}</code>
+                                                                            <span className="font-semibold text-slate-800 text-xs">{p.name}</span>
+                                                                            <div className="flex items-center gap-2">
+                                                                                <code className="text-[10px] text-slate-400 bg-slate-100 px-1 rounded">{p.sku}</code>
+                                                                                {p.requires_sn && <span className="text-[9px] text-violet-500 font-medium">Requires S/N</span>}
+                                                                            </div>
                                                                         </div>
                                                                     ))}
                                                                     {productsList.filter(p => !itemSearch[i] || p.name.toLowerCase().includes(itemSearch[i].toLowerCase()) || p.sku.toLowerCase().includes(itemSearch[i].toLowerCase())).length === 0 && (
-                                                                        <div className="p-3 text-xs text-slate-400 text-center italic">No products found</div>
+                                                                        <div className="p-4 text-xs text-slate-400 text-center italic">No products found</div>
                                                                     )}
                                                                 </div>
                                                             </div>
