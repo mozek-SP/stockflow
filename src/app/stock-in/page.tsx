@@ -322,7 +322,7 @@ export default function StockInPage() {
                                                                         <div key={snIdx} className="relative group">
                                                                             <Input 
                                                                                 placeholder={`S/N #${snIdx + 1}`}
-                                                                                className="text-[10px] h-8 font-mono bg-white border-slate-200 focus:border-violet-400 focus:ring-violet-500/10 transition-all pl-6"
+                                                                                className="text-sm h-10 font-mono bg-white border-slate-200 focus:border-violet-400 focus:ring-violet-500/10 transition-all pl-8 shadow-sm"
                                                                                 value={(item.serial_numbers || "").split(",")[snIdx] || ""}
                                                                                 onChange={(e) => {
                                                                                     const currentSns = (item.serial_numbers || "").split(",")
@@ -331,7 +331,7 @@ export default function StockInPage() {
                                                                                     setItems(items.map((x, idx) => idx === i ? { ...x, serial_numbers: newSns.join(",") } : x))
                                                                                 }}
                                                                             />
-                                                                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] text-slate-300 font-bold group-focus-within:text-violet-400">{snIdx + 1}</span>
+                                                                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-300 font-bold group-focus-within:text-violet-400">{snIdx + 1}</span>
                                                                         </div>
                                                                     ))}
                                                                 </div>

@@ -418,7 +418,7 @@ export default function TransfersPage() {
                                                                                 <div key={snIdx} className="relative group">
                                                                                     <Input 
                                                                                         placeholder={`S/N #${snIdx + 1}`}
-                                                                                        className={`text-[10px] h-8 font-mono pl-6 transition-all ${item.selected_sns[snIdx] ? "bg-violet-50 border-violet-300 text-violet-700 font-bold" : "bg-white border-slate-200 focus:border-violet-400 focus:ring-violet-500/10"}`}
+                                                                                        className={`text-sm h-10 font-mono pl-8 shadow-sm transition-all ${item.selected_sns[snIdx] ? "bg-violet-50 border-violet-300 text-violet-700 font-bold" : "bg-white border-slate-200 focus:border-violet-400 focus:ring-violet-500/10"}`}
                                                                                         value={item.selected_sns[snIdx] || ""}
                                                                                         onChange={(e) => {
                                                                                             const val = e.target.value.trim()
@@ -432,7 +432,7 @@ export default function TransfersPage() {
                                                                                             }
                                                                                         }}
                                                                                     />
-                                                                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] text-slate-300 font-bold group-focus-within:text-violet-400">{snIdx + 1}</span>
+                                                                                    <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] text-slate-300 font-bold group-focus-within:text-violet-400">{snIdx + 1}</span>
                                                                                     {item.selected_sns[snIdx] && !availSns.includes(item.selected_sns[snIdx]) && (
                                                                                         <div className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full border border-white" title="S/N invalid or not in stock" />
                                                                                     )}
